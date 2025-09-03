@@ -18,12 +18,20 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				'poppins': ['Poppins', 'sans-serif'],
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',
 				background: 'hsl(var(--background))',
 				foreground: 'hsl(var(--foreground))',
+				'cyber-blue': 'hsl(var(--cyber-blue))',
+				'cyber-purple': 'hsl(var(--cyber-purple))',
+				'cyber-green': 'hsl(var(--cyber-green))',
+				'cyber-red': 'hsl(var(--cyber-red))',
+				'cyber-orange': 'hsl(var(--cyber-orange))',
 				primary: {
 					DEFAULT: 'hsl(var(--primary))',
 					foreground: 'hsl(var(--primary-foreground))'

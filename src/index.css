@@ -8,33 +8,49 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 220 25% 8%;
+    --foreground: 0 0% 95%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card: 220 20% 12%;
+    --card-foreground: 0 0% 95%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover: 220 20% 12%;
+    --popover-foreground: 0 0% 95%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 200 100% 50%;
+    --primary-foreground: 220 25% 8%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 260 100% 60%;
+    --secondary-foreground: 0 0% 95%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 220 15% 20%;
+    --muted-foreground: 0 0% 65%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 140 100% 50%;
+    --accent-foreground: 220 25% 8%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 100% 60%;
+    --destructive-foreground: 0 0% 95%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 220 15% 25%;
+    --input: 220 15% 25%;
+    --ring: 200 100% 50%;
+
+    /* LifeLine specific design tokens */
+    --cyber-blue: 200 100% 50%;
+    --cyber-purple: 260 100% 60%;
+    --cyber-green: 140 100% 50%;
+    --cyber-red: 0 100% 60%;
+    --cyber-orange: 30 100% 60%;
+    
+    --gradient-primary: linear-gradient(135deg, hsl(var(--cyber-blue)) 0%, hsl(var(--cyber-purple)) 100%);
+    --gradient-success: linear-gradient(135deg, hsl(var(--cyber-green)) 0%, hsl(var(--cyber-blue)) 100%);
+    --gradient-danger: linear-gradient(135deg, hsl(var(--cyber-red)) 0%, hsl(var(--cyber-orange)) 100%);
+    --gradient-card: linear-gradient(135deg, hsl(var(--card)) 0%, hsl(220 15% 15%) 100%);
+    
+    --glow-primary: 0 0 20px hsl(var(--cyber-blue) / 0.3);
+    --glow-danger: 0 0 20px hsl(var(--cyber-red) / 0.3);
+    --glow-success: 0 0 20px hsl(var(--cyber-green) / 0.3);
 
     --radius: 0.5rem;
 
