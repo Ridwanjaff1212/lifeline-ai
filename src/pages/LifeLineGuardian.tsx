@@ -13,6 +13,11 @@ import { EnhancedQRGenerator } from "@/components/EnhancedQRGenerator";
 import { QRBraceletDesigner } from "@/components/QRBraceletDesigner";
 import { KuwaitMap } from "@/components/KuwaitMap";
 import { VoiceCommands } from "@/components/VoiceCommands";
+import { NeuroAI } from "@/components/NeuroAI";
+import { DisasterAI } from "@/components/DisasterAI";
+import { AdaptiveSOS } from "@/components/AdaptiveSOS";
+import { SurvivalMode } from "@/components/SurvivalMode";
+import { CommunityPulse } from "@/components/CommunityPulse";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +38,9 @@ import {
   Settings,
   FileText,
   Navigation,
-  QrCode
+  QrCode,
+  Brain,
+  Battery
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -104,6 +111,11 @@ export const LifeLineGuardian = () => {
   // Community & helpers
   const [communityHelpers, setCommunityHelpers] = useState(0);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
+
+  // Next-level features state
+  const [batteryLevel, setBatteryLevel] = useState(75);
+  const [isOnline, setIsOnline] = useState(true);
+  const [currentSituation, setCurrentSituation] = useState<"normal" | "medical" | "accident" | "crime" | "fire" | "disaster">("normal");
 
   // Initialize systems on app load
   useEffect(() => {
@@ -386,10 +398,14 @@ export const LifeLineGuardian = () => {
 
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 bg-card/50">
+          <TabsList className="grid w-full grid-cols-6 bg-card/50">
             <TabsTrigger value="dashboard" className="font-poppins">
               <Shield className="w-4 h-4 mr-2" />
               Guardian
+            </TabsTrigger>
+            <TabsTrigger value="neural" className="font-poppins">
+              <Brain className="w-4 h-4 mr-2" />
+              Neural AI
             </TabsTrigger>
             <TabsTrigger value="health" className="font-poppins">
               <Heart className="w-4 h-4 mr-2" />
@@ -499,6 +515,67 @@ export const LifeLineGuardian = () => {
             </div>
           </TabsContent>
 
+          {/* Neural AI Tab */}
+          <TabsContent value="neural" className="space-y-6">
+            <div className="grid gap-6">
+              <NeuroAI
+                onStressDetected={(level) => {
+                  if (level === "critical") {
+                    setRiskScore(prev => Math.min(100, prev + 25));
+                    setCurrentSituation("medical");
+                    toast({
+                      title: "Critical Stress Detected",
+                      description: "High stress levels may indicate emergency situation",
+                      variant: "destructive"
+                    });
+                  }
+                }}
+                onConditionDetected={(condition, confidence) => {
+                  if (confidence > 0.8) {
+                    toast({
+                      title: "Medical Condition Alert",
+                      description: `Possible ${condition} detected with ${(confidence * 100).toFixed(0)}% confidence`,
+                      variant: "destructive"
+                    });
+                  }
+                }}
+              />
+              
+              <DisasterAI
+                currentLocation={{ lat: 29.3759, lng: 47.9774, city: "Kuwait City" }}
+                onDisasterDetected={(event) => {
+                  setCurrentSituation(event.type === "earthquake" ? "disaster" : "fire");
+                  setRiskScore(prev => Math.min(100, prev + 30));
+                  toast({
+                    title: `${event.type.replace('_', ' ').toUpperCase()} Detected`,
+                    description: `${event.severity} severity in ${event.location}`,
+                    variant: "destructive"
+                  });
+                }}
+              />
+              
+              <AdaptiveSOS
+                vitals={healthReadings}
+                location={{ lat: 29.3759, lng: 47.9774, city: "Kuwait City" }}
+                situation={currentSituation}
+                onRouteSelected={(route) => {
+                  toast({
+                    title: "SOS Route Selected",
+                    description: `Contacting ${route.target} - ETA: ${route.eta} minutes`,
+                  });
+                }}
+              />
+              
+              <SurvivalMode
+                batteryLevel={batteryLevel}
+                isOnline={isOnline}
+                vitals={healthReadings}
+                location={{ lat: 29.3759, lng: 47.9774, city: "Kuwait City" }}
+                emergencyData={{ userProfile, emergencyContacts: [] }}
+              />
+            </div>
+          </TabsContent>
+
           {/* Health Tab */}
           <TabsContent value="health" className="space-y-6">
             <HeartRateScanner onReadingComplete={handleHeartRateReading} />
@@ -519,6 +596,16 @@ export const LifeLineGuardian = () => {
 
           {/* Community Tab */}
           <TabsContent value="community" className="space-y-6">
+            <CommunityPulse
+              currentLocation={{ lat: 29.3759, lng: 47.9774, city: "Kuwait City" }}
+              onEmergencySelected={(event) => {
+                toast({
+                  title: "Emergency Event Selected",
+                  description: `${event.type} in ${event.location} - ${event.status}`,
+                });
+              }}
+            />
+
             <Card className="p-6 bg-[var(--gradient-card)] border-cyber-purple/30 text-center">
               <h3 className="font-bold text-cyber-purple mb-4">Community Rescue Network</h3>
               <div className="grid grid-cols-2 gap-4 mb-6">
