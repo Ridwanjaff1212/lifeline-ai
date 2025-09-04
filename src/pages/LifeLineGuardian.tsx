@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { GuardianStatus } from "@/components/GuardianStatus";
 import { TriageChat } from "@/components/TriageChat";
-import { SmartWatchHub } from "@/components/SmartWatchHub";
+import { AegisWatch3D } from "@/components/AegisWatch3D";
 import { HeartRateScanner } from "@/components/HeartRateScanner";
 import { VitalCard } from "@/components/VitalCard";
 import { EmergencyButton } from "@/components/EmergencyButton";
@@ -310,8 +310,14 @@ export const LifeLineGuardian = () => {
         temperature: [healthReadings.temperature],
         timestamps: [new Date().toLocaleTimeString()]
       },
-      notes: `Guardian auto-detected: ${emergencyModal.type}`,
-      qrCode: ""
+      timeline: [
+        { time: new Date().toLocaleTimeString(), event: "Emergency detected", severity: "critical" as const },
+        { time: new Date().toLocaleTimeString(), event: "Guardian Autopilot activated", severity: "info" as const }
+      ],
+      mediaCapture: { hasAudio: true, hasVideo: true, duration: 15 },
+      riskScore: riskScore,
+      status: "active" as const,
+      notes: `Guardian auto-detected: ${emergencyModal.type}`
     };
 
     setIncidentData(incident);
@@ -500,8 +506,8 @@ export const LifeLineGuardian = () => {
 
           {/* Watch Hub Tab */}
           <TabsContent value="watch">
-            <SmartWatchHub
-              onEmergencyTrigger={() => handleEmergencyTrigger("Watch SOS")}
+            <AegisWatch3D
+              onEmergencyTrigger={() => handleEmergencyTrigger("Aegis Watch SOS")}
               healthReadings={healthReadings}
             />
           </TabsContent>
@@ -532,18 +538,31 @@ export const LifeLineGuardian = () => {
               </div>
               
               <KuwaitMap
-                currentLocation={currentLocation ? [currentLocation.latitude, currentLocation.longitude] : null}
-                emergencyContacts={userProfile.emergencyContacts}
-                preferredHospitals={userProfile.preferredHospitals}
+                currentLocation={currentLocation ? [currentLocation.longitude, currentLocation.latitude] : undefined}
+                emergencyMode={guardianStatus === "emergency"}
+                onLocationUpdate={(coords) => {
+                  setCurrentLocation(prev => prev ? {
+                    ...prev,
+                    longitude: coords[0],
+                    latitude: coords[1]
+                  } : null);
+                }}
               />
             </Card>
 
             <VoiceCommands
-              onCommand={(command) => {
-                if (command.includes('emergency')) {
-                  handleEmergencyTrigger("Voice Command");
+              onEmergencyTrigger={(type: string) => handleEmergencyTrigger(type)}
+              onLocationShare={() => {
+                if (currentLocation) {
+                  const coordsText = `${currentLocation.latitude.toFixed(6)}°N, ${currentLocation.longitude.toFixed(6)}°E`;
+                  toast({
+                    title: "Location Shared",
+                    description: `Coordinates: ${coordsText}`,
+                    variant: "default"
+                  });
                 }
               }}
+              userProfile={userProfile}
             />
           </TabsContent>
         </Tabs>

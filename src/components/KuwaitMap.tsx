@@ -16,6 +16,8 @@ interface KuwaitMapProps {
   currentLocation?: [number, number];
   emergencyMode?: boolean;
   onLocationUpdate?: (coords: [number, number]) => void;
+  emergencyContacts?: any[];
+  preferredHospitals?: any[];
 }
 
 interface LocationPoint {

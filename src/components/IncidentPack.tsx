@@ -66,6 +66,7 @@ export interface IncidentData {
   };
   riskScore: number;
   status: "active" | "resolved" | "escalated";
+  notes?: string;
 }
 
 interface IncidentPackProps {

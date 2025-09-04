@@ -17,6 +17,7 @@ import {
 interface VoiceCommandsProps {
   onEmergencyTrigger: (type: string) => void;
   onLocationShare: () => void;
+  onCommand?: (command: any) => void;
   userProfile: any;
 }
 

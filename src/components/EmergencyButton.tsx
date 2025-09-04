@@ -4,13 +4,19 @@ import { cn } from "@/lib/utils";
 interface EmergencyButtonProps {
   icon: React.ReactNode;
   title: string;
-  subtitle: string;
-  onClick: () => void;
-  variant: "fall" | "crash" | "scream" | "gas" | "heat";
+  subtitle?: string;
+  onClick?: () => void;
+  onTrigger?: (type: string) => void;
+  variant?: "fall" | "crash" | "scream" | "gas" | "heat";
+  type?: string;
   className?: string;
 }
 
-export const EmergencyButton = ({ icon, title, subtitle, onClick, variant, className }: EmergencyButtonProps) => {
+export const EmergencyButton = ({ icon, title, subtitle, onClick, onTrigger, variant = "fall", type, className }: EmergencyButtonProps) => {
+  const handleClick = () => {
+    if (onClick) onClick();
+    if (onTrigger && type) onTrigger(type);
+  };
   const getVariantStyles = () => {
     switch (variant) {
       case "fall":
@@ -30,7 +36,7 @@ export const EmergencyButton = ({ icon, title, subtitle, onClick, variant, class
 
   return (
     <Button
-      onClick={onClick}
+      onClick={handleClick}
       className={cn(
         "h-20 w-full border-2 text-white font-poppins transition-all duration-300 hover:scale-105 active:scale-95",
         getVariantStyles(),
@@ -41,7 +47,7 @@ export const EmergencyButton = ({ icon, title, subtitle, onClick, variant, class
         <div className="text-2xl">{icon}</div>
         <div className="text-left">
           <div className="font-semibold text-sm">{title}</div>
-          <div className="text-xs opacity-80">{subtitle}</div>
+          {subtitle && <div className="text-xs opacity-80">{subtitle}</div>}
         </div>
       </div>
     </Button>
