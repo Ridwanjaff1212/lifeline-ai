@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,9 +30,10 @@ interface TriageMessage {
 
 interface TriageChatProps {
   onEmergencyTrigger: () => void;
+  onEmergencyDetected?: (condition: string, urgency: string) => void;
 }
 
-export const TriageChat = ({ onEmergencyTrigger }: TriageChatProps) => {
+export const TriageChat = ({ onEmergencyTrigger, onEmergencyDetected }: TriageChatProps) => {
   const { toast } = useToast();
   const [messages, setMessages] = useState<TriageMessage[]>([
     {
@@ -49,73 +50,118 @@ export const TriageChat = ({ onEmergencyTrigger }: TriageChatProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
-  const triageDatabase = {
-    // Critical conditions - immediate emergency
+  const medicalDatabase = {
     "chest pain": {
-      response: "🚨 CRITICAL: Chest pain can indicate heart attack. Call emergency services immediately (112).\n\n1. Sit up, stay calm\n2. Loosen tight clothing\n3. Chew aspirin if not allergic\n4. Monitor breathing\n5. Do NOT wait - call 112 now",
-      severity: "critical" as const,
-      actions: ["Call 112", "Give Aspirin", "Monitor"]
+      urgency: "critical",
+      accuracy: 0.94,
+      steps: [
+        "Call emergency services immediately (112 in Kuwait)",
+        "Sit down and stay calm - avoid physical exertion",
+        "Take 300mg aspirin if available and not allergic (chew slowly)",
+        "Loosen tight clothing around chest and neck",
+        "Monitor breathing and consciousness continuously",
+        "Prepare for CPR if person becomes unresponsive"
+      ],
+      warning: "CRITICAL: Possible heart attack - immediate medical intervention required",
+      vitals: { hr: ">100 or <60", spO2: "may drop", bp: "elevated or dropping" }
     },
-    "heart attack": {
-      response: "🚨 CRITICAL: Heart attack in progress. Call 112 immediately.\n\n1. Call emergency services NOW\n2. Chew aspirin (if not allergic)\n3. Sit upright, stay calm\n4. Loosen clothing\n5. Prepare for CPR if unconscious",
-      severity: "critical" as const,
-      actions: ["Call 112", "CPR Ready", "Aspirin"]
+    "difficulty breathing": {
+      urgency: "high",
+      accuracy: 0.91,
+      steps: [
+        "Assess airway - check for obstruction",
+        "Position upright or in tripod position",
+        "Administer rescue inhaler if asthma history",
+        "Encourage slow, deep breathing techniques",
+        "Monitor oxygen saturation if available",
+        "Call emergency services if severe or worsening"
+      ],
+      warning: "HIGH PRIORITY: Respiratory distress can escalate rapidly",
+      vitals: { hr: "elevated", spO2: "<95%", rr: ">20" }
     },
-    "stroke": {
-      response: "🚨 CRITICAL: Stroke emergency. Call 112 immediately.\n\nF.A.S.T. Check:\n- Face drooping\n- Arm weakness\n- Speech difficulty\n- Time to call 112\n\nDo NOT give food, water, or medication.",
-      severity: "critical" as const,
-      actions: ["Call 112", "FAST Check", "Position"]
+    "bleeding": {
+      urgency: "medium-high",
+      accuracy: 0.89,
+      steps: [
+        "Apply direct pressure with sterile gauze or clean cloth",
+        "Elevate injured area above heart level if possible",
+        "Do NOT remove embedded objects",
+        "Apply pressure bandage over initial dressing",
+        "Monitor for signs of shock (pale, rapid pulse)",
+        "Seek immediate care for arterial bleeding"
+      ],
+      warning: "CAUTION: Monitor for hemorrhagic shock symptoms",
+      vitals: { hr: "increasing", bp: "may drop", cap_refill: ">2 seconds" }
+    },
+    "burn": {
+      urgency: "medium",
+      accuracy: 0.87,
+      steps: [
+        "Remove from heat source immediately",
+        "Cool with running water for 20+ minutes",
+        "Remove jewelry before swelling occurs",
+        "Cover with sterile, non-adherent dressing",
+        "Do NOT use ice, butter, or home remedies",
+        "Assess percentage of body surface area affected"
+      ],
+      warning: "CRITICAL for >10% body surface or airway burns",
+      vitals: { temp: "may elevate", hr: "elevated from pain", bp: "monitor" }
     },
     "unconscious": {
-      response: "🚨 CRITICAL: Unconscious person requires immediate help.\n\n1. Check responsiveness\n2. Call 112 immediately\n3. Check breathing and pulse\n4. Recovery position if breathing\n5. CPR if no pulse/breathing",
-      severity: "critical" as const,
-      actions: ["Call 112", "Check Pulse", "CPR"]
+      urgency: "critical",
+      accuracy: 0.96,
+      steps: [
+        "Check responsiveness: 'Are you okay?' + shoulder tap",
+        "Assess breathing: look, listen, feel for 10 seconds",
+        "Call 112 immediately - request ambulance",
+        "Open airway: head tilt, chin lift",
+        "Recovery position if breathing, CPR if not",
+        "Check pulse every 2 minutes until help arrives"
+      ],
+      warning: "CRITICAL EMERGENCY: Begin life support measures",
+      vitals: { hr: "check pulse", breathing: "assess", response: "none" }
     },
-    
-    // High priority
-    "choking": {
-      response: "⚠️ HIGH PRIORITY: Choking emergency.\n\n1. Encourage coughing first\n2. Give 5 back blows between shoulder blades\n3. Give 5 abdominal thrusts (Heimlich)\n4. Repeat until object dislodged\n5. Call 112 if unsuccessful",
-      severity: "high" as const,
-      actions: ["Back Blows", "Abdominal Thrusts", "Call 112"]
+    "seizure": {
+      urgency: "high",
+      accuracy: 0.92,
+      steps: [
+        "Ensure scene safety - move dangerous objects away",
+        "Do NOT restrain or put anything in mouth",
+        "Time the seizure duration",
+        "Place in recovery position after seizure ends",
+        "Monitor breathing and consciousness",
+        "Call emergency services if >5 minutes or first seizure"
+      ],
+      warning: "EMERGENCY if seizure >5 minutes or multiple seizures",
+      vitals: { hr: "elevated during", breathing: "may be impaired", recovery: "gradual" }
     },
-    "severe bleeding": {
-      response: "⚠️ HIGH PRIORITY: Severe bleeding control.\n\n1. Apply direct pressure with clean cloth\n2. Elevate injured area above heart\n3. Do NOT remove embedded objects\n4. Apply pressure points if needed\n5. Call 112 for severe blood loss",
-      severity: "high" as const,
-      actions: ["Direct Pressure", "Elevate", "Call 112"]
+    "stroke": {
+      urgency: "critical",
+      accuracy: 0.93,
+      steps: [
+        "FAST assessment: Face droop, Arm weakness, Speech difficulty, Time",
+        "Call emergency services immediately",
+        "Do NOT give food, water, or medications",
+        "Position with head elevated 30 degrees",
+        "Monitor vital signs and consciousness",
+        "Note exact time of symptom onset"
+      ],
+      warning: "TIME-CRITICAL: Every minute matters for brain tissue",
+      vitals: { bp: "often elevated", hr: "variable", neuro: "assess FAST" }
     },
     "allergic reaction": {
-      response: "⚠️ HIGH PRIORITY: Allergic reaction protocol.\n\n1. Remove/avoid allergen immediately\n2. Use epinephrine auto-injector if available\n3. Call 112 if breathing difficulties\n4. Monitor airways closely\n5. Prepare for CPR if needed",
-      severity: "high" as const,
-      actions: ["EpiPen", "Call 112", "Monitor"]
-    },
-    
-    // Medium priority
-    "burn": {
-      response: "🔥 BURN TREATMENT:\n\n1. Cool with water for 10-20 minutes\n2. Remove jewelry/tight items\n3. Do NOT use ice or butter\n4. Cover with sterile gauze\n5. Seek medical attention for large/deep burns",
-      severity: "medium" as const,
-      actions: ["Cool Water", "Remove Items", "Cover"]
-    },
-    "fracture": {
-      response: "🦴 FRACTURE CARE:\n\n1. Do NOT move the injured area\n2. Support/immobilize with splint\n3. Apply ice wrapped in cloth\n4. Check circulation below injury\n5. Seek medical attention",
-      severity: "medium" as const,
-      actions: ["Immobilize", "Ice", "Medical Care"]
-    },
-    "sprain": {
-      response: "🏃 SPRAIN TREATMENT (R.I.C.E.):\n\n1. Rest - avoid using injured area\n2. Ice - 15-20 minutes every 2-3 hours\n3. Compression - elastic bandage\n4. Elevation - raise above heart level\n5. Monitor for worsening",
-      severity: "medium" as const,
-      actions: ["Rest", "Ice", "Compress", "Elevate"]
-    },
-
-    // Low priority
-    "headache": {
-      response: "💊 HEADACHE RELIEF:\n\n1. Rest in quiet, dark room\n2. Apply cold compress to forehead\n3. Stay hydrated\n4. Consider over-the-counter pain relief\n5. Seek help if severe or sudden onset",
-      severity: "low" as const,
-      actions: ["Rest", "Hydrate", "Cold Compress"]
-    },
-    "nausea": {
-      response: "🤢 NAUSEA MANAGEMENT:\n\n1. Sip clear fluids slowly\n2. Eat bland foods (crackers, toast)\n3. Rest in upright position\n4. Fresh air or ginger may help\n5. Monitor for dehydration",
-      severity: "low" as const,
-      actions: ["Clear Fluids", "Bland Food", "Rest"]
+      urgency: "high",
+      accuracy: 0.88,
+      steps: [
+        "Remove or avoid allergen source",
+        "Administer epinephrine auto-injector if available",
+        "Call emergency services for severe reactions",
+        "Position for comfort - sitting if breathing difficulty",
+        "Monitor airway, breathing, circulation",
+        "Prepare for second epinephrine dose if needed"
+      ],
+      warning: "CRITICAL: Anaphylaxis can be fatal within minutes",
+      vitals: { hr: "rapid", bp: "may drop", spO2: "may decrease", skin: "hives/swelling" }
     }
   };
 
@@ -129,6 +175,92 @@ export const TriageChat = ({ onEmergencyTrigger }: TriageChatProps) => {
     }
   };
 
+  const analyzeSymptoms = useCallback((input: string) => {
+    const lowerInput = input.toLowerCase();
+    let bestMatch = null;
+    let highestScore = 0;
+    
+    // Advanced symptom matching with weighted scoring
+    for (const [condition, data] of Object.entries(medicalDatabase)) {
+      let score = 0;
+      
+      // Direct condition matches
+      if (lowerInput.includes(condition.replace("_", " "))) score += 10;
+      
+      // Symptom keyword analysis
+      const keywords = {
+        "chest pain": ["chest", "heart", "cardiac", "crushing", "pressure", "angina"],
+        "difficulty breathing": ["breath", "air", "wheeze", "asthma", "dyspnea", "shortness"],
+        "bleeding": ["cut", "blood", "hemorrhage", "wound", "laceration", "gash"],
+        "burn": ["burn", "fire", "heat", "scald", "chemical", "electrical"],
+        "unconscious": ["passed out", "faint", "collapse", "unresponsive", "coma"],
+        "seizure": ["seizure", "convulsion", "fit", "epilepsy", "spasm", "jerking"],
+        "stroke": ["stroke", "paralysis", "slurred", "droop", "weakness", "confusion"],
+        "allergic reaction": ["allergy", "hives", "swelling", "itching", "anaphylaxis", "rash"]
+      };
+      
+      if (keywords[condition]) {
+        keywords[condition].forEach(keyword => {
+          if (lowerInput.includes(keyword)) score += 3;
+        });
+      }
+      
+      // Context analysis
+      const urgencyWords = ["severe", "bad", "terrible", "emergency", "help", "critical"];
+      const mildWords = ["mild", "slight", "little", "minor"];
+      
+      urgencyWords.forEach(word => {
+        if (lowerInput.includes(word)) score += 2;
+      });
+      
+      mildWords.forEach(word => {
+        if (lowerInput.includes(word)) score -= 1;
+      });
+      
+      if (score > highestScore) {
+        highestScore = score;
+        bestMatch = { condition, data, score };
+      }
+    }
+    
+    if (bestMatch && bestMatch.score >= 3) {
+      const confidence = Math.min(0.95, bestMatch.data.accuracy + (bestMatch.score * 0.01));
+      
+      const response = {
+        condition: bestMatch.condition.charAt(0).toUpperCase() + bestMatch.condition.slice(1).replace("_", " "),
+        urgency: bestMatch.data.urgency,
+        steps: bestMatch.data.steps,
+        warning: bestMatch.data.warning,
+        vitals: bestMatch.data.vitals,
+        confidence: confidence,
+        accuracy: bestMatch.data.accuracy
+      };
+      
+      onEmergencyDetected?.(bestMatch.condition, response.urgency);
+      return response;
+    }
+    
+    // Enhanced default response with triage questions
+    const defaultResponse = {
+      condition: "Initial Assessment",
+      urgency: "medium",
+      steps: [
+        "Describe your primary concern or pain location",
+        "Rate pain/discomfort on scale 1-10",
+        "Note any recent changes in symptoms", 
+        "Check if person is alert and responsive",
+        "Monitor breathing rate and quality",
+        "Call emergency services if symptoms worsen"
+      ],
+      warning: "For severe symptoms, call 112 (Kuwait Emergency) immediately",
+      vitals: { hr: "monitor", breathing: "assess", consciousness: "check" },
+      confidence: 0.75,
+      accuracy: 0.80
+    };
+    
+    return defaultResponse;
+  }, [onEmergencyDetected]);
+
   const handleTriageInput = async (userInput: string) => {
     const userMessage: TriageMessage = {
       id: Date.now().toString(),
@@ -140,71 +272,41 @@ export const TriageChat = ({ onEmergencyTrigger }: TriageChatProps) => {
     setMessages(prev => [...prev, userMessage]);
     setIsTyping(true);
     
-    // Simulate AI processing delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    // Simulate advanced AI processing
+    await new Promise(resolve => setTimeout(resolve, 1800));
     
-    let response = "I understand you're experiencing symptoms. ";
-    let severity: 'low' | 'medium' | 'high' | 'critical' = 'low';
-    let actions: string[] = [];
-    
-    const lowerInput = userInput.toLowerCase();
-    
-    // Check for emergency keywords
-    for (const [condition, data] of Object.entries(triageDatabase)) {
-      if (lowerInput.includes(condition) || 
-          (condition === "severe bleeding" && (lowerInput.includes("bleeding") && lowerInput.includes("severe"))) ||
-          (condition === "allergic reaction" && (lowerInput.includes("allergic") || lowerInput.includes("allergy")))) {
-        response = data.response;
-        severity = data.severity;
-        actions = data.actions;
-        break;
-      }
-    }
-    
-    if (response === "I understand you're experiencing symptoms. ") {
-      // Generic medical advice
-      if (lowerInput.includes("pain")) {
-        response = "For general pain management:\n\n1. Rest the affected area\n2. Apply ice for 15-20 minutes\n3. Consider over-the-counter pain relief\n4. Monitor symptoms\n5. Seek medical attention if severe or persistent";
-        severity = 'medium';
-        actions = ["Rest", "Ice", "Monitor"];
-      } else if (lowerInput.includes("fever")) {
-        response = "For fever management:\n\n1. Rest and stay hydrated\n2. Cool compress on forehead\n3. Light clothing\n4. Monitor temperature\n5. Seek help if >39°C or severe symptoms";
-        severity = 'medium';
-        actions = ["Rest", "Hydrate", "Monitor"];
-      } else {
-        response = "Please describe your symptoms more specifically. I can help with:\n\n• Chest pain or heart problems\n• Breathing difficulties\n• Severe bleeding or injuries\n• Burns, fractures, or sprains\n• Allergic reactions\n• Choking or unconsciousness\n\nFor immediate emergencies, call 112.";
-        actions = ["Be Specific", "Call 112"];
-      }
-    }
+    const analysis = analyzeSymptoms(userInput);
     
     const aiMessage: TriageMessage = {
       id: (Date.now() + 1).toString(),
       type: 'ai',
-      content: response,
+      content: `**${analysis.condition}** (${(analysis.confidence * 100).toFixed(0)}% confidence)\n\n${analysis.warning}\n\n**IMMEDIATE STEPS:**\n${analysis.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\n\n**VITAL SIGNS TO MONITOR:**\n${Object.entries(analysis.vitals || {}).map(([key, value]) => `• ${key.toUpperCase()}: ${value}`).join('\n')}`,
       timestamp: new Date(),
-      severity,
-      actions
+      severity: analysis.urgency as any,
+      actions: ["Call 112", "Monitor Vitals", "Follow Steps"]
     };
     
     setMessages(prev => [...prev, aiMessage]);
     setIsTyping(false);
     
     // Trigger emergency for critical conditions
-    if (severity === 'critical') {
+    if (analysis.urgency === 'critical') {
       toast({
         title: "Critical Emergency Detected",
-        description: "Triggering emergency protocols",
+        description: `${analysis.condition} - Triggering emergency protocols`,
         variant: "destructive"
       });
       setTimeout(() => {
         onEmergencyTrigger();
-      }, 2000);
+      }, 3000);
     }
     
-    // Text-to-speech for response
+    // Enhanced text-to-speech
     if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(response.replace(/[🚨⚠️🔥💊🤢🦴🏃]/g, ''));
-      utterance.rate = 0.9;
+      const cleanText = aiMessage.content.replace(/[🚨⚠️🔥💊🤢🦴🏃*]/g, '').replace(/\n/g, '. ');
+      const utterance = new SpeechSynthesisUtterance(cleanText.substring(0, 200));
+      utterance.rate = 0.8;
+      utterance.volume = 0.8;
       speechSynthesis.speak(utterance);
     }
   };

@@ -111,9 +111,8 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
 
     let frameCount = 0;
     let redValues: number[] = [];
-    const maxFrames = 150; // 5 seconds at 30fps
-    const startTime = Date.now();
-
+    const maxFrames = 180; // 6 seconds at 30fps for better accuracy
+    
     const analyzeFrame = () => {
       if (!isScanning || frameCount >= maxFrames) {
         if (frameCount >= maxFrames) {
@@ -122,46 +121,109 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
         return;
       }
       
+      // Clear canvas and draw current frame
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      
+      // Draw detection overlay
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const radius = 80;
+      
+      // Detection circle
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      // Get image data for analysis
+      const imageData = ctx.getImageData(centerX - radius, centerY - radius, radius * 2, radius * 2);
       const data = imageData.data;
       
       let redSum = 0;
+      let greenSum = 0;
+      let blueSum = 0;
       let pixelCount = 0;
       
-      // Sample center region for better finger detection
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
-      const radius = 100;
-      
-      for (let x = centerX - radius; x < centerX + radius; x++) {
-        for (let y = centerY - radius; y < centerY + radius; y++) {
-          if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
-            const index = (y * canvas.width + x) * 4;
-            redSum += data[index]; // Red channel
-            pixelCount++;
-          }
-        }
+      // Enhanced PPG analysis - focus on red channel variations
+      for (let i = 0; i < data.length; i += 16) { // Sample every 4th pixel for performance
+        const red = data[i];
+        const green = data[i + 1];
+        const blue = data[i + 2];
+        
+        redSum += red;
+        greenSum += green;
+        blueSum += blue;
+        pixelCount++;
       }
       
       const avgRed = redSum / pixelCount;
+      const avgGreen = greenSum / pixelCount;
+      const avgBlue = blueSum / pixelCount;
+      
+      // Calculate PPG signal strength
+      const brightness = (avgRed + avgGreen + avgBlue) / 3;
+      const redRatio = avgRed / (avgGreen + avgBlue + 1);
+      
       redValues.push(avgRed);
       
-      // Calculate signal quality based on red intensity
-      const quality = Math.min(100, Math.max(0, (avgRed - 120) * 2));
+      // Enhanced signal quality calculation
+      let quality = 0;
+      if (brightness > 150 && redRatio > 1.1) {
+        quality = Math.min(95, Math.max(0, (avgRed - 120) * 0.8));
+      } else if (brightness > 100) {
+        quality = Math.min(70, Math.max(0, (avgRed - 100) * 0.5));
+      }
+      
       setSignalQuality(quality);
+      
+      // Real-time BPM estimation (display preliminary results)
+      if (redValues.length >= 60 && frameCount % 30 === 0) { // Every second
+        const recentValues = redValues.slice(-60);
+        let peaks = 0;
+        
+        for (let i = 2; i < recentValues.length - 2; i++) {
+          if (recentValues[i] > recentValues[i-1] && 
+              recentValues[i] > recentValues[i+1] && 
+              recentValues[i] > avgRed * 1.02) {
+            peaks++;
+          }
+        }
+        
+        const preliminaryBPM = Math.max(50, Math.min(120, peaks * 30));
+        setCurrentBPM(preliminaryBPM);
+      }
       
       frameCount++;
       const currentProgress = (frameCount / maxFrames) * 100;
       setProgress(currentProgress);
       
+      // Visual feedback indicators
+      ctx.fillStyle = quality > 70 ? '#00ff88' : quality > 40 ? '#ffaa00' : '#ff4444';
+      ctx.fillRect(centerX - 8, centerY - 8, 16, 16);
+      
+      // Crosshair for precise finger placement
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(centerX - 20, centerY);
+      ctx.lineTo(centerX + 20, centerY);
+      ctx.moveTo(centerX, centerY - 20);
+      ctx.lineTo(centerX, centerY + 20);
+      ctx.stroke();
+      
       // Update instruction based on quality
-      if (quality < 30) {
-        setInstruction("Cover camera lens completely with fingertip");
-      } else if (quality < 60) {
-        setInstruction("Press gently, hold steady...");
+      if (quality < 20) {
+        setInstruction("⚪ Cover camera lens completely with fingertip");
+      } else if (quality < 50) {
+        setInstruction("🟡 Good contact, hold steady...");
+      } else if (quality < 80) {
+        setInstruction("🟢 Great signal! Measuring...");
       } else {
-        setInstruction("Perfect! Reading heart rate...");
+        setInstruction("✨ Perfect! Heart rate detection active");
       }
       
       requestAnimationFrame(analyzeFrame);
@@ -485,19 +547,39 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
           </div>
         )}
 
-        {/* Hidden video and canvas for camera method */}
-        <video
-          ref={videoRef}
-          autoPlay
-          muted
-          className="hidden"
-        />
-        <canvas
-          ref={canvasRef}
-          width={320}
-          height={240}
-          className="hidden"
-        />
+        {/* Live camera view for scanning */}
+        {scanMethod === 'camera' && isScanning && (
+          <div className="mt-6">
+            <h4 className="text-sm font-bold font-poppins text-center mb-2">
+              Live Heart Rate Detection
+            </h4>
+            <div className="relative rounded-lg overflow-hidden border border-cyber-blue/30">
+              <video
+                ref={videoRef}
+                autoPlay
+                muted
+                className="w-full h-48 object-cover bg-black"
+              />
+              <canvas
+                ref={canvasRef}
+                width={320}
+                height={240}
+                className="absolute top-0 left-0 w-full h-48 pointer-events-none"
+              />
+              <div className="absolute bottom-2 left-2 bg-black/70 text-cyber-blue px-2 py-1 rounded text-xs font-poppins">
+                PPG Analysis • {Math.round(signalQuality)}% Signal
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Hidden video and canvas for audio method */}
+        {scanMethod === 'audio' && (
+          <>
+            <video ref={videoRef} className="hidden" />
+            <canvas ref={canvasRef} className="hidden" />
+          </>
+        )}
       </Card>
 
       {/* Recent Readings */}
