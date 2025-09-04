@@ -9,6 +9,8 @@ import { EmergencyButton } from "@/components/EmergencyButton";
 import { EmergencyModal } from "@/components/EmergencyModal";
 import { UserProfileSetup, UserProfile } from "@/components/UserProfileSetup";
 import { IncidentPack, IncidentData } from "@/components/IncidentPack";
+import { EnhancedQRGenerator } from "@/components/EnhancedQRGenerator";
+import { QRBraceletDesigner } from "@/components/QRBraceletDesigner";
 import { KuwaitMap } from "@/components/KuwaitMap";
 import { VoiceCommands } from "@/components/VoiceCommands";
 import { Card } from "@/components/ui/card";
@@ -30,7 +32,8 @@ import {
   Phone,
   Settings,
   FileText,
-  Navigation
+  Navigation,
+  QrCode
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +83,8 @@ export const LifeLineGuardian = () => {
   });
   const [incidentData, setIncidentData] = useState<IncidentData | null>(null);
   const [showIncidentPack, setShowIncidentPack] = useState(false);
+  const [showQRGenerator, setShowQRGenerator] = useState(false);
+  const [showBraceletDesigner, setShowBraceletDesigner] = useState(false);
   
   // Location & sensors
   const [currentLocation, setCurrentLocation] = useState<{
@@ -514,79 +519,149 @@ export const LifeLineGuardian = () => {
 
           {/* Community Tab */}
           <TabsContent value="community" className="space-y-6">
-            <Card className="p-6 bg-[var(--gradient-card)] border-cyber-blue/20">
-              <h3 className="font-bold font-poppins text-foreground mb-4">
-                Emergency Network
-              </h3>
+            <Card className="p-6 bg-[var(--gradient-card)] border-cyber-purple/30 text-center">
+              <h3 className="font-bold text-cyber-purple mb-4">Community Rescue Network</h3>
               <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="text-center">
-                  <div className="text-3xl font-bold font-poppins text-cyber-green">
-                    {communityHelpers}
-                  </div>
-                  <div className="text-sm text-muted-foreground font-poppins">
-                    Nearby Helpers
-                  </div>
+                <div className="p-4 bg-background/30 rounded">
+                  <div className="text-2xl font-bold text-cyber-green">{communityHelpers}</div>
+                  <div className="text-sm text-muted-foreground">Nearby Helpers</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-3xl font-bold font-poppins text-cyber-blue">
-                    24/7
-                  </div>
-                  <div className="text-sm text-muted-foreground font-poppins">
-                    Response Ready
-                  </div>
+                <div className="p-4 bg-background/30 rounded">
+                  <div className="text-2xl font-bold text-cyber-blue">24/7</div>
+                  <div className="text-sm text-muted-foreground">Guardian Active</div>
                 </div>
               </div>
               
-              <KuwaitMap
-                currentLocation={currentLocation ? [currentLocation.longitude, currentLocation.latitude] : undefined}
-                emergencyMode={guardianStatus === "emergency"}
-                onLocationUpdate={(coords) => {
-                  setCurrentLocation(prev => prev ? {
-                    ...prev,
-                    longitude: coords[0],
-                    latitude: coords[1]
-                  } : null);
-                }}
-              />
-            </Card>
-
-            <VoiceCommands
-              onEmergencyTrigger={(type: string) => handleEmergencyTrigger(type)}
-              onLocationShare={() => {
-                if (currentLocation) {
-                  const coordsText = `${currentLocation.latitude.toFixed(6)}°N, ${currentLocation.longitude.toFixed(6)}°E`;
+              <Button 
+                className="w-full bg-[var(--gradient-primary)] text-white mb-4"
+                onClick={() => {
+                  setCommunityHelpers(prev => prev + 1);
                   toast({
-                    title: "Location Shared",
-                    description: `Coordinates: ${coordsText}`,
+                    title: "Joined Community Network",
+                    description: "You're now part of the rescue network",
                     variant: "default"
                   });
-                }
-              }}
-              userProfile={userProfile}
-            />
+                }}
+              >
+                <Users className="w-4 h-4 mr-2" />
+                Join Rescue Network
+              </Button>
+
+              <div className="text-sm text-muted-foreground">
+                Connect with nearby LifeLine users for mutual emergency assistance
+              </div>
+            </Card>
+
+            {/* Enhanced QR Features */}
+            <div className="grid grid-cols-2 gap-4">
+              <Button 
+                className="h-20 bg-[var(--gradient-primary)] text-white"
+                onClick={() => setShowQRGenerator(true)}
+              >
+                <QrCode className="w-8 h-8 mr-3" />
+                Enhanced QR Generator
+              </Button>
+              
+              <Button 
+                variant="outline"
+                className="h-20 border-cyber-orange/30"
+                onClick={() => setShowBraceletDesigner(true)}
+              >
+                <Watch className="w-8 h-8 mr-3" />
+                QR Medical Bracelet
+              </Button>
+            </div>
+
+            {/* Emergency Contacts */}
+            <Card className="p-4 bg-[var(--gradient-card)] border-cyber-green/30">
+              <h3 className="font-bold text-cyber-green mb-3 flex items-center gap-2">
+                <Phone className="w-4 h-4" />
+                Emergency Contacts
+              </h3>
+              {userProfile.emergencyContacts.length > 0 ? (
+                <div className="space-y-2">
+                  {userProfile.emergencyContacts.slice(0, 3).map((contact, index) => (
+                    <div key={index} className="p-3 bg-background/30 rounded flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">{contact.name}</div>
+                        <div className="text-sm text-muted-foreground">{contact.relationship}</div>
+                      </div>
+                      <Button 
+                        size="sm"
+                        onClick={() => window.open(`tel:${contact.phone}`, "_self")}
+                      >
+                        Call
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center text-muted-foreground py-8">
+                  <Phone className="w-12 h-12 mx-auto mb-4 text-cyber-green" />
+                  <p>No emergency contacts added</p>
+                  <Button 
+                    className="mt-4" 
+                    onClick={() => setShowProfileSetup(true)}
+                  >
+                    Add Contacts
+                  </Button>
+                </div>
+              )}
+            </Card>
           </TabsContent>
         </Tabs>
 
         {/* Modals */}
-        <EmergencyModal
-          isOpen={emergencyModal.isOpen}
-          onClose={() => setEmergencyModal({ isOpen: false, type: "" })}
-          emergencyType={emergencyModal.type}
-          onEmergencyConfirmed={handleEmergencyConfirmed}
-        />
+        {emergencyModal.isOpen && (
+          <EmergencyModal
+            isOpen={emergencyModal.isOpen}
+            onClose={() => setEmergencyModal({ isOpen: false, type: "" })}
+            onEmergencyConfirmed={handleEmergencyConfirmed}
+            emergencyType={emergencyModal.type}
+          />
+        )}
 
-        <UserProfileSetup
-          isOpen={showProfileSetup}
-          onClose={() => setShowProfileSetup(false)}
-          onSave={setUserProfile}
-          initialProfile={userProfile}
-        />
+        {showProfileSetup && (
+          <UserProfileSetup
+            isOpen={showProfileSetup}
+            onClose={() => setShowProfileSetup(false)}
+            onSave={(profile) => {
+              setUserProfile(profile);
+              setShowProfileSetup(false);
+              toast({
+                title: "Profile Updated",
+                description: "Your medical profile has been saved",
+                variant: "default"
+              });
+            }}
+            initialProfile={userProfile}
+          />
+        )}
 
-        {incidentData && (
+        {showIncidentPack && incidentData && (
           <IncidentPack
             isOpen={showIncidentPack}
             onClose={() => setShowIncidentPack(false)}
             incidentData={incidentData}
+            userProfile={userProfile}
+          />
+        )}
+
+        {showQRGenerator && (
+          <EnhancedQRGenerator
+            isOpen={showQRGenerator}
+            onClose={() => setShowQRGenerator(false)}
+            userProfile={userProfile}
+            currentLocation={currentLocation || undefined}
+            healthReadings={healthReadings}
+            incidentData={incidentData || undefined}
+          />
+        )}
+
+        {showBraceletDesigner && (
+          <QRBraceletDesigner
+            isOpen={showBraceletDesigner}
+            onClose={() => setShowBraceletDesigner(false)}
             userProfile={userProfile}
           />
         )}
