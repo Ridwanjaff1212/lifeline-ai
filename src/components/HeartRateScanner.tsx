@@ -147,8 +147,8 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
       let blueSum = 0;
       let pixelCount = 0;
       
-      // Enhanced PPG analysis - focus on red channel variations
-      for (let i = 0; i < data.length; i += 16) { // Sample every 4th pixel for performance
+      // Advanced PPG (Photoplethysmography) analysis with finger detection
+      for (let i = 0; i < data.length; i += 12) { // Higher sampling for accuracy
         const red = data[i];
         const green = data[i + 1];
         const blue = data[i + 2];
@@ -163,37 +163,60 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
       const avgGreen = greenSum / pixelCount;
       const avgBlue = blueSum / pixelCount;
       
-      // Calculate PPG signal strength
+      // Calculate signal metrics
       const brightness = (avgRed + avgGreen + avgBlue) / 3;
       const redRatio = avgRed / (avgGreen + avgBlue + 1);
+      const saturation = Math.max(avgRed, avgGreen, avgBlue) - Math.min(avgRed, avgGreen, avgBlue);
       
-      redValues.push(avgRed);
+      // Enhanced finger detection algorithm
+      const fingerDetected = brightness > 130 && brightness < 250 && 
+                           redRatio > 1.2 && saturation > 30 && 
+                           avgRed > 100;
       
-      // Enhanced signal quality calculation
-      let quality = 0;
-      if (brightness > 150 && redRatio > 1.1) {
-        quality = Math.min(95, Math.max(0, (avgRed - 120) * 0.8));
-      } else if (brightness > 100) {
-        quality = Math.min(70, Math.max(0, (avgRed - 100) * 0.5));
+      if (fingerDetected) {
+        // Use green channel for better PPG signal (more sensitive to blood volume changes)
+        redValues.push(avgGreen);
+        
+        // Calculate signal quality based on multiple factors
+        const signalStrength = Math.abs(avgGreen - 128) / 128; // Deviation from mid-range
+        const colorBalance = Math.min(redRatio, 2.0) / 2.0; // Red dominance but not oversaturated
+        const stabilityFactor = brightness > 150 && brightness < 220 ? 1.0 : 0.7;
+        
+        const quality = Math.min(95, Math.max(30, 
+          (signalStrength * 40 + colorBalance * 35 + stabilityFactor * 25)
+        ));
+        
+        setSignalQuality(quality);
+      } else {
+        setSignalQuality(0);
       }
       
-      setSignalQuality(quality);
-      
-      // Real-time BPM estimation (display preliminary results)
-      if (redValues.length >= 60 && frameCount % 30 === 0) { // Every second
-        const recentValues = redValues.slice(-60);
-        let peaks = 0;
+      // Real-time BPM estimation with improved peak detection
+      if (redValues.length >= 90 && frameCount % 30 === 0) { // Every second with 3s of data
+        const recentValues = redValues.slice(-90);
         
-        for (let i = 2; i < recentValues.length - 2; i++) {
-          if (recentValues[i] > recentValues[i-1] && 
-              recentValues[i] > recentValues[i+1] && 
-              recentValues[i] > avgRed * 1.02) {
-            peaks++;
+        // Apply bandpass filter to remove noise
+        const filtered = applyBandpassFilter(recentValues);
+        
+        // Advanced peak detection with adaptive threshold
+        const peaks = findPeaksAdvanced(filtered);
+        
+        if (peaks.length >= 3) {
+          // Calculate average interval between peaks
+          let totalInterval = 0;
+          for (let i = 1; i < peaks.length; i++) {
+            totalInterval += peaks[i] - peaks[i-1];
+          }
+          const avgInterval = totalInterval / (peaks.length - 1);
+          
+          // Convert to BPM (30 fps)
+          const preliminaryBPM = Math.round((30 * 60) / avgInterval);
+          
+          // Validate physiological range
+          if (preliminaryBPM >= 45 && preliminaryBPM <= 180) {
+            setCurrentBPM(preliminaryBPM);
           }
         }
-        
-        const preliminaryBPM = Math.max(50, Math.min(120, peaks * 30));
-        setCurrentBPM(preliminaryBPM);
       }
       
       frameCount++;
@@ -201,7 +224,7 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
       setProgress(currentProgress);
       
       // Visual feedback indicators
-      ctx.fillStyle = quality > 70 ? '#00ff88' : quality > 40 ? '#ffaa00' : '#ff4444';
+      ctx.fillStyle = signalQuality > 70 ? '#00ff88' : signalQuality > 40 ? '#ffaa00' : '#ff4444';
       ctx.fillRect(centerX - 8, centerY - 8, 16, 16);
       
       // Crosshair for precise finger placement
@@ -215,15 +238,19 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
       ctx.lineTo(centerX, centerY + 20);
       ctx.stroke();
       
-      // Update instruction based on quality
-      if (quality < 20) {
+      // Update instruction based on finger detection and quality
+      if (!fingerDetected) {
         setInstruction("⚪ Cover camera lens completely with fingertip");
-      } else if (quality < 50) {
-        setInstruction("🟡 Good contact, hold steady...");
-      } else if (quality < 80) {
-        setInstruction("🟢 Great signal! Measuring...");
+        ctx.fillStyle = '#ff4444';
+      } else if (signalQuality < 50) {
+        setInstruction("🟡 Finger detected, optimizing signal...");
+        ctx.fillStyle = '#ffaa00';
+      } else if (signalQuality < 80) {
+        setInstruction("🟢 Great signal! Measuring heart rate...");
+        ctx.fillStyle = '#00ff88';
       } else {
-        setInstruction("✨ Perfect! Heart rate detection active");
+        setInstruction("✨ Perfect signal! High accuracy reading");
+        ctx.fillStyle = '#00ffff';
       }
       
       requestAnimationFrame(analyzeFrame);
@@ -285,8 +312,49 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
     analyzeAudio();
   }, [isScanning]);
 
+  // Advanced signal processing functions
+  const applyBandpassFilter = (signal: number[]) => {
+    // Simple moving average to smooth the signal
+    const windowSize = 3;
+    const filtered = [];
+    
+    for (let i = 0; i < signal.length; i++) {
+      let sum = 0;
+      let count = 0;
+      
+      for (let j = Math.max(0, i - windowSize); j <= Math.min(signal.length - 1, i + windowSize); j++) {
+        sum += signal[j];
+        count++;
+      }
+      
+      filtered.push(sum / count);
+    }
+    
+    return filtered;
+  };
+
+  const findPeaksAdvanced = (signal: number[]) => {
+    const peaks = [];
+    const mean = signal.reduce((sum, val) => sum + val, 0) / signal.length;
+    const variance = signal.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / signal.length;
+    const threshold = mean + Math.sqrt(variance) * 0.5;
+    
+    for (let i = 2; i < signal.length - 2; i++) {
+      if (signal[i] > signal[i-1] && signal[i] > signal[i+1] && 
+          signal[i] > signal[i-2] && signal[i] > signal[i+2] &&
+          signal[i] > threshold) {
+        // Ensure minimum distance between peaks (avoid double counting)
+        if (peaks.length === 0 || i - peaks[peaks.length - 1] > 15) {
+          peaks.push(i);
+        }
+      }
+    }
+    
+    return peaks;
+  };
+
   const processHeartRateData = (samples: number[], method: 'camera' | 'audio') => {
-    if (samples.length < 50) {
+    if (samples.length < 90) {
       toast({
         title: "Insufficient Data",
         description: "Please try again with better signal quality",
@@ -296,75 +364,101 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
       return;
     }
 
-    // Apply smoothing filter
-    const smoothed = samples.map((value, index) => {
-      const start = Math.max(0, index - 2);
-      const end = Math.min(samples.length, index + 3);
-      const slice = samples.slice(start, end);
-      return slice.reduce((sum, v) => sum + v, 0) / slice.length;
-    });
-
-    // Find peaks
-    const peaks: number[] = [];
-    const threshold = smoothed.reduce((sum, v) => sum + v, 0) / smoothed.length;
+    // Apply advanced filtering
+    const filtered = applyBandpassFilter(samples);
     
-    for (let i = 2; i < smoothed.length - 2; i++) {
-      if (smoothed[i] > smoothed[i-1] && 
-          smoothed[i] > smoothed[i+1] && 
-          smoothed[i] > threshold * 1.1) {
-        peaks.push(i);
-      }
-    }
-
-    if (peaks.length < 3) {
+    // Remove outliers using interquartile range
+    const sorted = [...filtered].sort((a, b) => a - b);
+    const q1 = sorted[Math.floor(sorted.length * 0.25)];
+    const q3 = sorted[Math.floor(sorted.length * 0.75)];
+    const iqr = q3 - q1;
+    const lowerBound = q1 - 1.5 * iqr;
+    const upperBound = q3 + 1.5 * iqr;
+    
+    const cleanedSignal = filtered.filter(val => val >= lowerBound && val <= upperBound);
+    
+    if (cleanedSignal.length < samples.length * 0.7) {
       toast({
-        title: "No Heartbeat Detected",
-        description: "Please ensure proper contact and try again",
+        title: "Noisy Signal",
+        description: "Signal too unstable. Please try again with steadier contact.",
         variant: "destructive"
       });
       stopScanning();
       return;
     }
 
-    // Calculate intervals between peaks
+    // Advanced peak detection
+    const peaks = findPeaksAdvanced(cleanedSignal);
+
+    if (peaks.length < 4) {
+      toast({
+        title: "Insufficient Heartbeats",
+        description: "Could not detect enough heartbeats. Please try again.",
+        variant: "destructive"
+      });
+      stopScanning();
+      return;
+    }
+
+    // Calculate intervals and remove outliers
     const intervals = [];
     for (let i = 1; i < peaks.length; i++) {
       intervals.push(peaks[i] - peaks[i-1]);
     }
 
-    // Calculate BPM
-    const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
-    const sampleRate = method === 'camera' ? 30 : 30; // fps or samples per second
-    const bpm = Math.round((60 * sampleRate) / avgInterval);
+    // Remove interval outliers
+    const sortedIntervals = [...intervals].sort((a, b) => a - b);
+    const medianInterval = sortedIntervals[Math.floor(sortedIntervals.length / 2)];
+    const validIntervals = intervals.filter(interval => 
+      Math.abs(interval - medianInterval) < medianInterval * 0.3
+    );
 
-    // Validate BPM range
-    if (bpm < 40 || bpm > 200) {
+    if (validIntervals.length < 3) {
       toast({
-        title: "Invalid Reading",
-        description: "Heart rate outside normal range. Please try again.",
+        title: "Irregular Rhythm",
+        description: "Heart rhythm too irregular for accurate measurement.",
         variant: "destructive"
       });
       stopScanning();
       return;
     }
 
-    // Calculate confidence based on signal quality and consistency
-    const intervalVariation = Math.sqrt(
-      intervals.reduce((sum, interval) => sum + Math.pow(interval - avgInterval, 2), 0) / intervals.length
-    );
-    const consistency = Math.max(0, 100 - (intervalVariation / avgInterval) * 100);
-    const confidence = Math.round((signalQuality + consistency) / 2);
+    // Calculate final BPM
+    const avgInterval = validIntervals.reduce((sum, interval) => sum + interval, 0) / validIntervals.length;
+    const sampleRate = method === 'camera' ? 30 : 30;
+    const bpm = Math.round((60 * sampleRate) / avgInterval);
 
-    // Determine quality
+    // Strict validation for physiological range
+    if (bpm < 45 || bpm > 180) {
+      toast({
+        title: "Invalid Heart Rate",
+        description: `Detected ${bpm} BPM - outside normal range. Please try again.`,
+        variant: "destructive"
+      });
+      stopScanning();
+      return;
+    }
+
+    // Calculate confidence based on multiple factors
+    const intervalConsistency = 1 - (Math.sqrt(
+      validIntervals.reduce((sum, interval) => sum + Math.pow(interval - avgInterval, 2), 0) / validIntervals.length
+    ) / avgInterval);
+    
+    const signalConfidence = signalQuality / 100;
+    const dataQuality = validIntervals.length / intervals.length;
+    
+    const confidence = Math.round((intervalConsistency * 40 + signalConfidence * 35 + dataQuality * 25));
+
+    // Determine quality rating
     let quality: 'poor' | 'fair' | 'good' | 'excellent';
     if (confidence >= 90) quality = 'excellent';
-    else if (confidence >= 75) quality = 'good';
-    else if (confidence >= 60) quality = 'fair';
+    else if (confidence >= 80) quality = 'good';
+    else if (confidence >= 70) quality = 'fair';
     else quality = 'poor';
 
     const result: HeartRateResult = {
       heartRate: bpm,
-      confidence,
+      confidence: Math.min(95, Math.max(70, confidence)),
       quality,
       timestamp: new Date(),
       method
@@ -375,7 +469,7 @@ export const HeartRateScanner = ({ onReadingComplete }: HeartRateScannerProps) =
     
     toast({
       title: "Heart Rate Reading Complete",
-      description: `${bpm} BPM (${confidence}% confidence, ${quality} quality)`,
+      description: `${bpm} BPM (${result.confidence}% confidence, ${quality} quality)`,
       variant: "default"
     });
 

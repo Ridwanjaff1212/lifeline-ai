@@ -1,118 +1,204 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { 
-  Mic, 
-  MicOff, 
-  Volume2, 
-  Heart, 
-  Phone, 
-  MapPin,
-  PlayCircle,
-  PauseCircle,
-  RotateCcw
-} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Mic, MicOff, Volume2, Brain, Activity } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface VoiceCommandsProps {
-  onEmergencyTrigger: (type: string) => void;
+  onEmergencyTriggered: () => void;
+  onVitalRequest: () => void;
   onLocationShare: () => void;
-  onCommand?: (command: any) => void;
-  userProfile: any;
 }
 
-interface CPRStep {
-  step: number;
-  instruction: string;
-  duration: number;
-  compressionRate?: number;
+interface VoiceCommand {
+  command: string;
+  action: () => void;
+  category: "emergency" | "health" | "info";
 }
 
-const cprSteps: CPRStep[] = [
-  { step: 1, instruction: "Check for responsiveness - tap shoulders and shout", duration: 10 },
-  { step: 2, instruction: "Call emergency services immediately", duration: 5 },
-  { step: 3, instruction: "Position hands center of chest, between nipples", duration: 15 },
-  { step: 4, instruction: "Begin chest compressions - push hard and fast", duration: 0, compressionRate: 100 },
-  { step: 5, instruction: "Allow complete chest recoil between compressions", duration: 0 },
-  { step: 6, instruction: "Continue until help arrives or person responds", duration: 0 }
-];
-
-export const VoiceCommands = ({ onEmergencyTrigger, onLocationShare, userProfile }: VoiceCommandsProps) => {
+export const VoiceCommands = ({ onEmergencyTriggered, onVitalRequest, onLocationShare }: VoiceCommandsProps) => {
   const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState("");
-  const [showCPRGuide, setShowCPRGuide] = useState(false);
-  const [currentCPRStep, setCurrentCPRStep] = useState(0);
-  const [cprTimer, setCprTimer] = useState(0);
-  const [compressionCount, setCompressionCount] = useState(0);
-  const [isMetronomeActive, setIsMetronomeActive] = useState(false);
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  
-  const recognitionRef = useRef<any>(null);
-  const metronomeRef = useRef<any>(null);
-  const stepTimerRef = useRef<any>(null);
+  const [lastCommand, setLastCommand] = useState<string>("");
+  const [confidence, setConfidence] = useState(0);
+  const [recognition, setRecognition] = useState<any>(null);
+  const [voiceAnalysis, setVoiceAnalysis] = useState<{tone: string, stress: number, clarity: number} | null>(null);
 
-  useEffect(() => {
-    // Check if Web Speech API is supported
+  const commands: VoiceCommand[] = [
+    {
+      command: "lifeline emergency",
+      action: () => {
+        speak("Emergency protocol activated. Stay calm.");
+        onEmergencyTriggered();
+      },
+      category: "emergency"
+    },
+    {
+      command: "lifeline help",
+      action: () => {
+        speak("Initiating emergency response. Are you injured?");
+        onEmergencyTriggered();
+      },
+      category: "emergency"
+    },
+    {
+      command: "check vitals",
+      action: () => {
+        speak("Checking your vital signs now.");
+        onVitalRequest();
+      },
+      category: "health"
+    },
+    {
+      command: "send location",
+      action: () => {
+        speak("Sharing your location with emergency contacts.");
+        onLocationShare();
+      },
+      category: "info"
+    },
+    {
+      command: "i need help",
+      action: () => {
+        speak("Help is on the way. Activating emergency protocols.");
+        onEmergencyTriggered();
+      },
+      category: "emergency"
+    },
+    {
+      command: "i feel faint",
+      action: () => {
+        speak("Detecting possible syncope. Sit down immediately. Activating medical alert.");
+        onEmergencyTriggered();
+      },
+      category: "emergency"
+    },
+    {
+      command: "chest pain",
+      action: () => {
+        speak("Cardiac event detected. Calling emergency services. Do not move.");
+        onEmergencyTriggered();
+      },
+      category: "emergency"
+    },
+    {
+      command: "breathing problems",
+      action: () => {
+        speak("Respiratory distress detected. Try to stay calm. Help is coming.");
+        onEmergencyTriggered();
+      },
+      category: "emergency"
+    }
+  ];
+
+  const initializeSpeechRecognition = useCallback(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      setVoiceSupported(true);
-      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
 
-      recognitionRef.current.onresult = (event: any) => {
-        let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          }
-        }
-        if (finalTranscript) {
-          setTranscript(finalTranscript);
-          processVoiceCommand(finalTranscript.toLowerCase());
+      recognition.onresult = (event) => {
+        const results = Array.from(event.results);
+        const latestResult = results[results.length - 1];
+        
+        if ((latestResult as any).isFinal) {
+          const transcript = latestResult[0].transcript.toLowerCase().trim();
+          const confidence = latestResult[0].confidence;
+          
+          setLastCommand(transcript);
+          setConfidence(confidence);
+          
+          // Analyze voice characteristics
+          analyzeVoiceCharacteristics(transcript, confidence);
+          
+          // Process command
+          processVoiceCommand(transcript, confidence);
         }
       };
 
-      recognitionRef.current.onerror = (event: any) => {
+      recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
         setIsListening(false);
       };
+
+      recognition.onend = () => {
+        if (isListening) {
+          // Restart recognition if it ends but we're still supposed to be listening
+          setTimeout(() => {
+            try {
+              recognition.start();
+            } catch (error) {
+              console.error('Failed to restart recognition:', error);
+              setIsListening(false);
+            }
+          }, 100);
+        }
+      };
+
+      setRecognition(recognition);
     }
+  }, [isListening]);
 
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      if (metronomeRef.current) {
-        clearInterval(metronomeRef.current);
-      }
-      if (stepTimerRef.current) {
-        clearInterval(stepTimerRef.current);
-      }
-    };
-  }, []);
-
-  const processVoiceCommand = (command: string) => {
-    console.log("Processing command:", command);
+  const analyzeVoiceCharacteristics = (transcript: string, confidence: number) => {
+    // Analyze speech patterns for stress/emergency detection
+    const words = transcript.split(' ');
+    const avgWordLength = words.reduce((sum, word) => sum + word.length, 0) / words.length;
     
-    if (command.includes('lifeline') || command.includes('life line')) {
-      if (command.includes("i'm hurt") || command.includes("im hurt") || command.includes("help me")) {
-        speak("Emergency detected. Starting Guardian Autopilot sequence.");
-        onEmergencyTrigger("Voice Emergency");
-      } else if (command.includes("send my location") || command.includes("share location")) {
-        speak("Sharing your location with emergency contacts.");
-        onLocationShare();
-      } else if (command.includes("cpr") || command.includes("show me cpr")) {
-        speak("Starting CPR instruction guide.");
-        setShowCPRGuide(true);
-        setCurrentCPRStep(0);
-      } else if (command.includes("stop") || command.includes("cancel")) {
-        speak("Voice commands stopped.");
-        setShowCPRGuide(false);
-        setIsMetronomeActive(false);
-        if (metronomeRef.current) clearInterval(metronomeRef.current);
+    // Detect stress indicators in speech
+    const stressWords = ['help', 'emergency', 'pain', 'hurt', 'dizzy', 'faint', 'sick', 'emergency'];
+    const stressScore = words.filter(word => stressWords.includes(word)).length / words.length;
+    
+    // Determine tone based on content and confidence
+    let tone = "normal";
+    let stress = 0.2;
+    let clarity = confidence;
+    
+    if (stressScore > 0.3) {
+      tone = "distressed";
+      stress = 0.8;
+    } else if (confidence < 0.6) {
+      tone = "unclear/slurred";
+      stress = 0.6;
+      clarity = 0.4;
+    } else if (avgWordLength < 3) {
+      tone = "rapid/panicked";
+      stress = 0.7;
+    }
+    
+    setVoiceAnalysis({ tone, stress, clarity });
+    
+    // Auto-trigger emergency if high stress detected
+    if (stress > 0.7) {
+      speak("High stress detected in voice. Activating emergency protocols.");
+      onEmergencyTriggered();
+    }
+  };
+
+  const processVoiceCommand = (transcript: string, confidence: number) => {
+    // Find matching command
+    for (const cmd of commands) {
+      if (transcript.includes(cmd.command)) {
+        if (confidence > 0.7) {
+          cmd.action();
+          return;
+        } else {
+          speak("Command unclear. Please repeat.");
+          return;
+        }
       }
+    }
+    
+    // Fuzzy matching for emergency keywords
+    const emergencyKeywords = ['help', 'emergency', 'pain', 'hurt', 'sick', 'faint', 'dizzy', 'bleeding'];
+    const hasEmergencyKeyword = emergencyKeywords.some(keyword => transcript.includes(keyword));
+    
+    if (hasEmergencyKeyword && confidence > 0.5) {
+      speak("Emergency detected. Activating response protocol.");
+      onEmergencyTriggered();
     }
   };
 
@@ -120,286 +206,171 @@ export const VoiceCommands = ({ onEmergencyTrigger, onLocationShare, userProfile
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.9;
-      utterance.pitch = 1;
-      utterance.volume = 0.8;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      
+      // Use more natural voice if available
+      const voices = speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice => 
+        voice.name.includes('Female') || voice.name.includes('Samantha') || voice.name.includes('Google')
+      );
+      
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+      
       speechSynthesis.speak(utterance);
     }
   };
 
-  const startListening = () => {
-    if (recognitionRef.current && voiceSupported) {
-      setTranscript("");
-      setIsListening(true);
-      recognitionRef.current.start();
+  const toggleListening = () => {
+    if (!recognition) {
+      initializeSpeechRecognition();
+      return;
     }
-  };
 
-  const stopListening = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (isListening) {
+      recognition.stop();
       setIsListening(false);
-    }
-  };
-
-  const startCPRGuide = () => {
-    setShowCPRGuide(true);
-    setCurrentCPRStep(0);
-    setCprTimer(0);
-    speak(cprSteps[0].instruction);
-    
-    if (cprSteps[0].duration > 0) {
-      stepTimerRef.current = setInterval(() => {
-        setCprTimer(prev => {
-          if (prev >= cprSteps[0].duration) {
-            nextCPRStep();
-            return 0;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-    }
-  };
-
-  const nextCPRStep = () => {
-    const nextStep = currentCPRStep + 1;
-    if (nextStep < cprSteps.length) {
-      setCurrentCPRStep(nextStep);
-      setCprTimer(0);
-      speak(cprSteps[nextStep].instruction);
-      
-      if (cprSteps[nextStep].compressionRate) {
-        startMetronome(cprSteps[nextStep].compressionRate!);
-      }
-      
-      if (cprSteps[nextStep].duration > 0) {
-        if (stepTimerRef.current) clearInterval(stepTimerRef.current);
-        stepTimerRef.current = setInterval(() => {
-          setCprTimer(prev => {
-            if (prev >= cprSteps[nextStep].duration) {
-              nextCPRStep();
-              return 0;
-            }
-            return prev + 1;
-          });
-        }, 1000);
+    } else {
+      try {
+        recognition.start();
+        setIsListening(true);
+        speak("Voice commands activated. Say Lifeline Emergency for help.");
+      } catch (error) {
+        console.error('Failed to start recognition:', error);
       }
     }
   };
 
-  const startMetronome = (bpm: number) => {
-    setIsMetronomeActive(true);
-    const interval = 60000 / bpm; // Convert BPM to milliseconds
+  useEffect(() => {
+    initializeSpeechRecognition();
     
-    metronomeRef.current = setInterval(() => {
-      // Play metronome sound (beep)
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.frequency.value = 800;
-      oscillator.type = 'sine';
-      
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-      
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.1);
-      
-      setCompressionCount(prev => prev + 1);
-    }, interval);
-  };
+    return () => {
+      if (recognition) {
+        recognition.stop();
+      }
+    };
+  }, [initializeSpeechRecognition]);
 
-  const stopCPRGuide = () => {
-    setShowCPRGuide(false);
-    setIsMetronomeActive(false);
-    setCompressionCount(0);
-    if (metronomeRef.current) clearInterval(metronomeRef.current);
-    if (stepTimerRef.current) clearInterval(stepTimerRef.current);
-    speak("CPR guide stopped.");
+  const getCategoryColor = (category: string) => {
+    switch (category) {
+      case "emergency": return "text-destructive";
+      case "health": return "text-cyber-blue";
+      case "info": return "text-cyber-green";
+      default: return "text-muted-foreground";
+    }
   };
 
   return (
-    <div className="space-y-4 font-poppins">
-      {/* Voice Recognition Status */}
-      <Card className={`p-4 bg-[var(--gradient-card)] ${isListening ? 'border-cyber-blue/50 shadow-[var(--glow-primary)]' : 'border-border'}`}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-medium text-cyber-blue flex items-center gap-2">
-            <Volume2 className="h-4 w-4" />
-            Voice Commands
-          </h3>
-          {voiceSupported ? (
-            <Button
-              onClick={isListening ? stopListening : startListening}
-              className={`${isListening ? 'bg-cyber-red' : 'bg-cyber-green'} text-white`}
-              size="sm"
-            >
-              {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-            </Button>
-          ) : (
-            <div className="text-xs text-cyber-orange">Voice not supported</div>
-          )}
-        </div>
+    <Card className="p-6 bg-[var(--gradient-card)] border-2 border-cyber-purple/30">
+      <div className="flex items-center gap-3 mb-4">
+        <Brain className="h-6 w-6 text-cyber-purple animate-pulse" />
+        <h3 className="text-xl font-bold text-foreground">Voice AI Assistant</h3>
+        <Badge variant="outline" className="text-cyber-purple border-cyber-purple/50">
+          Always Listening
+        </Badge>
+      </div>
+
+      {/* Voice Control */}
+      <div className="flex gap-3 mb-6">
+        <Button
+          onClick={toggleListening}
+          variant={isListening ? "destructive" : "default"}
+          className="flex-1"
+        >
+          {isListening ? <MicOff className="h-4 w-4 mr-2" /> : <Mic className="h-4 w-4 mr-2" />}
+          {isListening ? "Stop Listening" : "Start Voice Commands"}
+        </Button>
         
-        {isListening && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-cyber-blue rounded-full animate-pulse"></div>
-              <span className="text-sm text-cyber-blue">Listening...</span>
-            </div>
-            {transcript && (
-              <div className="p-2 bg-background/30 rounded text-sm">
-                "{transcript}"
-              </div>
-            )}
+        <Button
+          onClick={() => speak("LifeLine voice assistant ready. Say Lifeline Emergency if you need help.")}
+          variant="outline"
+          size="icon"
+        >
+          <Volume2 className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {/* Voice Analysis */}
+      {isListening && voiceAnalysis && (
+        <Card className="p-4 bg-muted/20 mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Activity className="h-4 w-4 text-cyber-blue" />
+            <span className="text-sm font-medium">Voice Analysis</span>
           </div>
-        )}
-        
-        <div className="mt-3 text-xs text-muted-foreground">
-          <strong>Try saying:</strong><br/>
-          • "LifeLine, I'm hurt" - Start emergency<br/>
-          • "Send my location" - Share with contacts<br/>
-          • "Show me CPR" - CPR instructions
-        </div>
-      </Card>
-
-      {/* Quick Voice Actions */}
-      <Card className="p-4 bg-[var(--gradient-card)] border-cyber-green/30">
-        <h3 className="font-medium text-cyber-green mb-3">Quick Actions</h3>
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            onClick={() => processVoiceCommand("lifeline im hurt")}
-            className="bg-cyber-red text-white text-xs p-2 h-auto"
-          >
-            <Heart className="h-3 w-3 mr-1" />
-            Emergency Help
-          </Button>
-          <Button
-            onClick={() => processVoiceCommand("send my location")}
-            className="bg-cyber-blue text-white text-xs p-2 h-auto"
-          >
-            <MapPin className="h-3 w-3 mr-1" />
-            Share Location
-          </Button>
-          <Button
-            onClick={startCPRGuide}
-            className="bg-cyber-orange text-white text-xs p-2 h-auto"
-          >
-            <Heart className="h-3 w-3 mr-1" />
-            CPR Guide
-          </Button>
-          <Button
-            onClick={() => speak(`Hello ${userProfile?.name || 'user'}, LifeLine Guardian is ready to assist you.`)}
-            className="bg-cyber-purple text-white text-xs p-2 h-auto"
-          >
-            <Volume2 className="h-3 w-3 mr-1" />
-            Voice Test
-          </Button>
-        </div>
-      </Card>
-
-      {/* CPR Guide Modal */}
-      {showCPRGuide && (
-        <Card className="p-6 bg-[var(--gradient-card)] border-cyber-red/50 shadow-[var(--glow-danger)]">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-cyber-red flex items-center gap-2">
-              <Heart className="h-5 w-5" />
-              CPR Instructions
-            </h3>
-            <Button onClick={stopCPRGuide} size="sm" variant="outline">
-              <RotateCcw className="h-4 w-4" />
-            </Button>
-          </div>
-          
-          <div className="space-y-4">
-            {/* Current Step */}
-            <div className="p-4 bg-cyber-red/10 border border-cyber-red/30 rounded">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-6 h-6 bg-cyber-red text-white rounded-full flex items-center justify-center text-xs font-bold">
-                  {cprSteps[currentCPRStep].step}
-                </div>
-                <span className="font-medium text-cyber-red">
-                  Step {cprSteps[currentCPRStep].step} of {cprSteps.length}
-                </span>
+          <div className="grid grid-cols-3 gap-4 text-xs">
+            <div>
+              <div className="text-muted-foreground">Tone</div>
+              <div className={cn("font-medium", 
+                voiceAnalysis.tone.includes('distressed') ? "text-destructive" :
+                voiceAnalysis.tone.includes('unclear') ? "text-orange-400" :
+                "text-cyber-green"
+              )}>
+                {voiceAnalysis.tone}
               </div>
-              <p className="text-sm">{cprSteps[currentCPRStep].instruction}</p>
             </div>
-
-            {/* Timer for timed steps */}
-            {cprSteps[currentCPRStep].duration > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span>Step Timer:</span>
-                  <span className="font-mono">{cprTimer}s / {cprSteps[currentCPRStep].duration}s</span>
-                </div>
-                <Progress 
-                  value={(cprTimer / cprSteps[currentCPRStep].duration) * 100} 
-                  className="h-2"
-                />
+            <div>
+              <div className="text-muted-foreground">Stress Level</div>
+              <div className={cn("font-medium",
+                voiceAnalysis.stress > 0.7 ? "text-destructive" :
+                voiceAnalysis.stress > 0.4 ? "text-orange-400" :
+                "text-cyber-green"
+              )}>
+                {(voiceAnalysis.stress * 100).toFixed(0)}%
               </div>
-            )}
-
-            {/* Metronome for compressions */}
-            {cprSteps[currentCPRStep].compressionRate && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Compression Rate:</span>
-                  <Button
-                    onClick={() => {
-                      if (isMetronomeActive) {
-                        setIsMetronomeActive(false);
-                        if (metronomeRef.current) clearInterval(metronomeRef.current);
-                      } else {
-                        startMetronome(cprSteps[currentCPRStep].compressionRate!);
-                      }
-                    }}
-                    size="sm"
-                    className={isMetronomeActive ? "bg-cyber-red" : "bg-cyber-green"}
-                  >
-                    {isMetronomeActive ? <PauseCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
-                  </Button>
-                </div>
-                <div className="text-center p-3 bg-background/30 rounded">
-                  <div className="text-lg font-bold text-cyber-blue">
-                    {cprSteps[currentCPRStep].compressionRate} BPM
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    Compressions: {compressionCount}
-                  </div>
-                  {isMetronomeActive && (
-                    <div className="mt-2">
-                      <div className="w-4 h-4 bg-cyber-blue rounded-full mx-auto animate-pulse"></div>
-                    </div>
-                  )}
-                </div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">Clarity</div>
+              <div className={cn("font-medium",
+                voiceAnalysis.clarity < 0.5 ? "text-destructive" :
+                voiceAnalysis.clarity < 0.7 ? "text-orange-400" :
+                "text-cyber-green"
+              )}>
+                {(voiceAnalysis.clarity * 100).toFixed(0)}%
               </div>
-            )}
-
-            {/* Manual navigation */}
-            <div className="flex gap-2">
-              <Button
-                onClick={() => currentCPRStep > 0 && setCurrentCPRStep(prev => prev - 1)}
-                disabled={currentCPRStep === 0}
-                size="sm"
-                variant="outline"
-                className="flex-1"
-              >
-                Previous
-              </Button>
-              <Button
-                onClick={nextCPRStep}
-                disabled={currentCPRStep === cprSteps.length - 1}
-                size="sm"
-                className="flex-1 bg-cyber-blue"
-              >
-                Next Step
-              </Button>
             </div>
           </div>
         </Card>
       )}
-    </div>
+
+      {/* Last Command */}
+      {lastCommand && (
+        <Card className="p-3 bg-cyber-blue/10 border-cyber-blue/30 mb-4">
+          <div className="text-sm text-cyber-blue mb-1">Last Command:</div>
+          <div className="text-foreground font-medium">"{lastCommand}"</div>
+          <div className="text-xs text-muted-foreground mt-1">
+            Confidence: {(confidence * 100).toFixed(0)}%
+          </div>
+        </Card>
+      )}
+
+      {/* Available Commands */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-foreground">Available Voice Commands:</h4>
+        <div className="grid grid-cols-1 gap-2">
+          {commands.slice(0, 6).map((cmd, i) => (
+            <div key={i} className="flex justify-between items-center p-2 rounded-lg bg-muted/10">
+              <span className="text-sm text-foreground">"{cmd.command}"</span>
+              <Badge variant="outline" className={cn("text-xs", getCategoryColor(cmd.category))}>
+                {cmd.category}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Status Indicator */}
+      <div className="mt-4 pt-4 border-t border-border">
+        <div className="flex items-center gap-2">
+          <div className={cn("w-2 h-2 rounded-full", 
+            isListening ? "bg-cyber-green animate-pulse" : "bg-muted"
+          )} />
+          <span className="text-xs text-muted-foreground">
+            {isListening ? "Listening for voice commands..." : "Voice commands inactive"}
+          </span>
+        </div>
+      </div>
+    </Card>
   );
 };

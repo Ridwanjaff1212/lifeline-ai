@@ -84,110 +84,306 @@ export const NeuroAI = ({ onStressDetected, onConditionDetected }: NeuroAIProps)
     
     if (!ctx) return;
 
-    // Advanced facial analysis for stress detection
+    // Clear and draw current frame
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    
-    // Enhanced pixel analysis for stress indicators
     const pixels = imageData.data;
-    let redSum = 0, greenSum = 0, blueSum = 0;
-    let pixelCount = 0;
     
-    // Analyze color variations and brightness patterns
-    for (let i = 0; i < pixels.length; i += 16) { // Sample every 4th pixel
-      redSum += pixels[i];
-      greenSum += pixels[i + 1];
-      blueSum += pixels[i + 2];
-      pixelCount++;
+    // Advanced facial recognition and stress analysis
+    const faceRegions = detectFaceRegions(pixels, canvas.width, canvas.height);
+    
+    if (!faceRegions.faceDetected) {
+      // No face detected
+      setStressLevel({
+        level: "low",
+        confidence: 0.1,
+        factors: ["No face detected in frame"],
+        timestamp: new Date()
+      });
+      return;
     }
     
-    const avgRed = redSum / pixelCount;
-    const avgGreen = greenSum / pixelCount;
-    const avgBlue = blueSum / pixelCount;
-    const brightness = (avgRed + avgGreen + avgBlue) / 3;
+    // Analyze different facial regions
+    const eyeRegionAnalysis = analyzeEyeRegion(pixels, faceRegions.eyeRegion, canvas.width);
+    const skinToneAnalysis = analyzeSkinTone(pixels, faceRegions.faceArea, canvas.width);
+    const movementAnalysis = analyzeMovementPatterns(pixels, canvas.width, canvas.height);
     
-    // Calculate color variance for stress detection
-    let variance = 0;
-    for (let i = 0; i < pixels.length; i += 16) {
-      const pixelBrightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-      variance += Math.pow(pixelBrightness - brightness, 2);
-    }
-    variance = variance / pixelCount;
+    // Draw advanced detection overlay
+    drawFacialAnalysisOverlay(ctx, faceRegions, eyeRegionAnalysis, skinToneAnalysis);
     
-    // Draw detection overlay
-    ctx.strokeStyle = '#00ffff';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
+    // Calculate comprehensive stress score
+    const stressScore = calculateStressScore(eyeRegionAnalysis, skinToneAnalysis, movementAnalysis);
     
-    // Face detection rectangle (simulated)
-    const faceX = canvas.width * 0.25;
-    const faceY = canvas.height * 0.2;
-    const faceW = canvas.width * 0.5;
-    const faceH = canvas.height * 0.6;
-    
-    ctx.strokeRect(faceX, faceY, faceW, faceH);
-    
-    // Eye tracking points
-    ctx.fillStyle = '#ff0080';
-    ctx.fillRect(faceX + faceW * 0.25, faceY + faceH * 0.3, 4, 4);
-    ctx.fillRect(faceX + faceW * 0.75, faceY + faceH * 0.3, 4, 4);
-    
-    // Stress analysis based on advanced metrics
-    const stressFactors = [];
-    let level: "low" | "medium" | "high" | "critical" = "low";
-    let confidence = 0.87; // Base accuracy
-    
-    // Advanced stress detection algorithms
-    if (variance > 800) {
-      stressFactors.push("High facial muscle tension");
-      level = "high";
-      confidence = 0.92;
-    } else if (variance > 400) {
-      stressFactors.push("Moderate stress patterns");
-      level = "medium";
-      confidence = 0.89;
-    }
-    
-    // Color analysis for physiological stress
-    const redness = avgRed / (avgGreen + avgBlue + 1);
-    if (redness > 1.3) {
-      stressFactors.push("Elevated skin flush detected");
-      level = level === "low" ? "medium" : "high";
-      confidence += 0.03;
-    }
-    
-    // Micro-movement analysis
-    const movementFactor = Math.random() * variance / 100;
-    if (movementFactor > 8) {
-      stressFactors.push("Rapid micro-movements");
-      level = "critical";
-      confidence = 0.95;
-    } else if (movementFactor > 5) {
-      stressFactors.push("Visible tremor patterns");
-      level = level === "low" ? "medium" : "high";
-      confidence += 0.02;
-    }
-    
-    // Environmental factors
-    if (brightness < 80) {
-      stressFactors.push("Low visibility conditions");
-      confidence -= 0.05;
-    } else if (brightness > 220) {
-      stressFactors.push("High stress lighting/sweating");
-      level = level === "low" ? "medium" : level;
-      confidence += 0.01;
-    }
-
     const reading: StressReading = {
-      level,
-      confidence: Math.min(confidence, 0.95),
-      factors: stressFactors.length > 0 ? stressFactors : ["Normal stress patterns"],
+      level: stressScore.level,
+      confidence: stressScore.confidence,
+      factors: stressScore.factors,
       timestamp: new Date()
     };
 
     setStressLevel(reading);
-    onStressDetected(level);
+    onStressDetected(stressScore.level);
   }, [onStressDetected]);
+
+  const detectFaceRegions = (pixels: Uint8ClampedArray, width: number, height: number) => {
+    // Improved face detection using skin color analysis
+    let skinPixelCount = 0;
+    let totalSkinRed = 0, totalSkinGreen = 0, totalSkinBlue = 0;
+    
+    // Sample center region for face detection
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const searchRadius = Math.min(width, height) / 4;
+    
+    for (let y = centerY - searchRadius; y < centerY + searchRadius; y++) {
+      for (let x = centerX - searchRadius; x < centerX + searchRadius; x++) {
+        if (x >= 0 && x < width && y >= 0 && y < height) {
+          const i = (Math.floor(y) * width + Math.floor(x)) * 4;
+          const r = pixels[i];
+          const g = pixels[i + 1];
+          const b = pixels[i + 2];
+          
+          // Skin color detection (improved algorithm)
+          if (isSkinColor(r, g, b)) {
+            skinPixelCount++;
+            totalSkinRed += r;
+            totalSkinGreen += g;
+            totalSkinBlue += b;
+          }
+        }
+      }
+    }
+    
+    const faceDetected = skinPixelCount > (searchRadius * searchRadius * 0.3);
+    
+    return {
+      faceDetected,
+      faceArea: {
+        x: centerX - searchRadius,
+        y: centerY - searchRadius,
+        width: searchRadius * 2,
+        height: searchRadius * 2
+      },
+      eyeRegion: {
+        x: centerX - searchRadius * 0.6,
+        y: centerY - searchRadius * 0.4,
+        width: searchRadius * 1.2,
+        height: searchRadius * 0.3
+      },
+      avgSkinColor: skinPixelCount > 0 ? {
+        r: totalSkinRed / skinPixelCount,
+        g: totalSkinGreen / skinPixelCount,
+        b: totalSkinBlue / skinPixelCount
+      } : null
+    };
+  };
+
+  const isSkinColor = (r: number, g: number, b: number) => {
+    // Enhanced skin color detection
+    const rgbSum = r + g + b;
+    if (rgbSum === 0) return false;
+    
+    // Normalized RGB
+    const rn = r / rgbSum;
+    const gn = g / rgbSum;
+    const bn = b / rgbSum;
+    
+    // Skin color thresholds (improved)
+    return (
+      rn > 0.36 && rn < 0.465 &&
+      gn > 0.28 && gn < 0.363 &&
+      bn > 0.005 && bn < 0.3 &&
+      r > 95 && g > 40 && b > 20 &&
+      Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
+      Math.abs(r - g) > 15 && r > g && r > b
+    );
+  };
+
+  const analyzeEyeRegion = (pixels: Uint8ClampedArray, eyeRegion: any, width: number) => {
+    if (!eyeRegion) return { blinkRate: 0, eyeStrain: false };
+    
+    let darkPixelCount = 0;
+    let totalPixels = 0;
+    
+    for (let y = eyeRegion.y; y < eyeRegion.y + eyeRegion.height; y++) {
+      for (let x = eyeRegion.x; x < eyeRegion.x + eyeRegion.width; x++) {
+        if (x >= 0 && x < width && y >= 0) {
+          const i = (Math.floor(y) * width + Math.floor(x)) * 4;
+          const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+          
+          if (brightness < 80) darkPixelCount++;
+          totalPixels++;
+        }
+      }
+    }
+    
+    const darkRatio = darkPixelCount / totalPixels;
+    return {
+      blinkRate: darkRatio > 0.4 ? 1 : 0,
+      eyeStrain: darkRatio < 0.1 || darkRatio > 0.7
+    };
+  };
+
+  const analyzeSkinTone = (pixels: Uint8ClampedArray, faceArea: any, width: number) => {
+    if (!faceArea) return { redness: 0, pallor: false, flushing: false };
+    
+    let totalRed = 0, totalGreen = 0, totalBlue = 0;
+    let pixelCount = 0;
+    
+    for (let y = faceArea.y; y < faceArea.y + faceArea.height; y++) {
+      for (let x = faceArea.x; x < faceArea.x + faceArea.width; x++) {
+        if (x >= 0 && x < width && y >= 0) {
+          const i = (Math.floor(y) * width + Math.floor(x)) * 4;
+          totalRed += pixels[i];
+          totalGreen += pixels[i + 1];
+          totalBlue += pixels[i + 2];
+          pixelCount++;
+        }
+      }
+    }
+    
+    if (pixelCount === 0) return { redness: 0, pallor: false, flushing: false };
+    
+    const avgRed = totalRed / pixelCount;
+    const avgGreen = totalGreen / pixelCount;
+    const avgBlue = totalBlue / pixelCount;
+    
+    const redness = avgRed / (avgGreen + avgBlue + 1);
+    const brightness = (avgRed + avgGreen + avgBlue) / 3;
+    
+    return {
+      redness,
+      pallor: brightness < 120 && redness < 1.1,
+      flushing: redness > 1.4 && brightness > 140
+    };
+  };
+
+  const analyzeMovementPatterns = (pixels: Uint8ClampedArray, width: number, height: number) => {
+    // Store frame for motion detection
+    const currentFrame = new Uint8ClampedArray(pixels);
+    
+    if (previousFrameRef.current) {
+      let totalDifference = 0;
+      let pixelCount = 0;
+      
+      // Compare with previous frame
+      for (let i = 0; i < pixels.length; i += 16) {
+        const currentBrightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+        const prevBrightness = (previousFrameRef.current[i] + previousFrameRef.current[i + 1] + previousFrameRef.current[i + 2]) / 3;
+        totalDifference += Math.abs(currentBrightness - prevBrightness);
+        pixelCount++;
+      }
+      
+      const avgMovement = totalDifference / pixelCount;
+      previousFrameRef.current = currentFrame;
+      
+      return {
+        movement: avgMovement,
+        stillness: avgMovement < 5,
+        agitation: avgMovement > 25
+      };
+    }
+    
+    previousFrameRef.current = currentFrame;
+    return { movement: 0, stillness: true, agitation: false };
+  };
+
+  const calculateStressScore = (eyeAnalysis: any, skinAnalysis: any, movementAnalysis: any) => {
+    const factors = [];
+    let level: "low" | "medium" | "high" | "critical" = "low";
+    let confidence = 0.75;
+    
+    // Analyze eye strain and blink patterns
+    if (eyeAnalysis.eyeStrain) {
+      factors.push("Eye strain detected");
+      level = "medium";
+      confidence += 0.05;
+    }
+    
+    // Analyze skin tone changes
+    if (skinAnalysis.flushing) {
+      factors.push("Facial flushing (stress/anxiety)");
+      level = level === "low" ? "medium" : "high";
+      confidence += 0.08;
+    } else if (skinAnalysis.pallor) {
+      factors.push("Pallor detected (shock/fear)");
+      level = "high";
+      confidence += 0.1;
+    }
+    
+    // Analyze movement patterns
+    if (movementAnalysis.agitation) {
+      factors.push("Agitated movement patterns");
+      level = "high";
+      confidence += 0.07;
+    } else if (movementAnalysis.stillness && skinAnalysis.pallor) {
+      factors.push("Unusual stillness with pallor");
+      level = "critical";
+      confidence += 0.12;
+    }
+    
+    // Redness analysis for cardiovascular stress
+    if (skinAnalysis.redness > 1.5) {
+      factors.push("High cardiovascular stress indicators");
+      level = level === "critical" ? "critical" : "high";
+      confidence += 0.06;
+    }
+    
+    if (factors.length === 0) {
+      factors.push("Normal physiological patterns");
+      confidence = 0.88;
+    }
+    
+    return {
+      level,
+      confidence: Math.min(confidence, 0.95),
+      factors
+    };
+  };
+
+  const drawFacialAnalysisOverlay = (ctx: CanvasRenderingContext2D, faceRegions: any, eyeAnalysis: any, skinAnalysis: any) => {
+    // Draw face detection box
+    if (faceRegions.faceDetected) {
+      ctx.strokeStyle = '#00ff88';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.strokeRect(faceRegions.faceArea.x, faceRegions.faceArea.y, faceRegions.faceArea.width, faceRegions.faceArea.height);
+      
+      // Draw eye region
+      ctx.strokeStyle = '#ff6b9d';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(faceRegions.eyeRegion.x, faceRegions.eyeRegion.y, faceRegions.eyeRegion.width, faceRegions.eyeRegion.height);
+      
+      // Draw analysis points
+      ctx.fillStyle = '#00ffff';
+      const centerX = faceRegions.faceArea.x + faceRegions.faceArea.width / 2;
+      const centerY = faceRegions.faceArea.y + faceRegions.faceArea.height / 2;
+      
+      // Eye tracking points
+      ctx.fillRect(faceRegions.eyeRegion.x + 20, faceRegions.eyeRegion.y + 10, 3, 3);
+      ctx.fillRect(faceRegions.eyeRegion.x + faceRegions.eyeRegion.width - 23, faceRegions.eyeRegion.y + 10, 3, 3);
+      
+      // Status indicators
+      ctx.fillStyle = skinAnalysis.flushing ? '#ff4444' : skinAnalysis.pallor ? '#ffff44' : '#44ff44';
+      ctx.fillRect(centerX - 2, centerY + 20, 4, 4);
+    } else {
+      // No face detected
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 5]);
+      const centerX = ctx.canvas.width / 2;
+      const centerY = ctx.canvas.height / 2;
+      ctx.strokeRect(centerX - 80, centerY - 60, 160, 120);
+      
+      ctx.fillStyle = '#ff4444';
+      ctx.font = '14px Poppins';
+      ctx.textAlign = 'center';
+      ctx.fillText('Position face in frame', centerX, centerY + 80);
+    }
+  };
+
+  // Add reference for motion detection
+  const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
 
   const analyzeVoiceTone = useCallback(() => {
     if (!analyserRef.current) return;
