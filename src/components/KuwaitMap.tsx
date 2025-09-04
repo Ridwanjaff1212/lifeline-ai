@@ -250,19 +250,19 @@ export const KuwaitMap = ({ currentLocation, emergencyMode, onLocationUpdate }: 
       {/* Map Placeholder (Offline Mode) */}
       {!isOnline && (
         <Card className="p-4 bg-[var(--gradient-card)] border-cyber-orange/30">
-          <div className="text-center">
-            <div className="text-6xl mb-4">🗺️</div>
-            <h3 className="font-medium text-cyber-orange mb-2">Kuwait Emergency Map</h3>
-            <p className="text-sm text-muted-foreground">
-              Offline mode: Emergency locations cached locally
-            </p>
-            <div className="mt-4 p-3 bg-cyber-orange/10 rounded border border-cyber-orange/30">
-              <div className="text-sm">
-                <strong>Current Area:</strong> {selectedArea}<br/>
-                <strong>Emergency Number:</strong> 112 (Police), 777 (Fire), 101 (Medical)
+            <div className="text-center">
+              <div className="text-6xl mb-4">🗺️</div>
+              <h3 className="font-medium text-cyber-orange mb-2">Kuwait Emergency Map</h3>
+              <p className="text-sm text-muted-foreground">
+                Offline mode: Emergency locations cached locally
+              </p>
+              <div className="mt-4 p-3 bg-cyber-orange/10 rounded border border-cyber-orange/30">
+                <div className="text-sm">
+                  <strong>Current Area:</strong> {selectedArea}<br/>
+                  <strong>Emergency Number:</strong> 112 (Police), 777 (Fire), 101 (Medical)
+                </div>
               </div>
             </div>
-          </div>
         </Card>
       )}
 
