@@ -21,6 +21,9 @@ export default {
 			fontFamily: {
 				'poppins': ['Poppins', 'sans-serif'],
 			},
+			spacing: {
+				'safe': 'env(safe-area-inset-bottom)',
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',

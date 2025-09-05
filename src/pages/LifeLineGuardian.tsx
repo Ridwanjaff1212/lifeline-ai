@@ -3,7 +3,7 @@ import { LoadingScreen } from "@/components/LoadingScreen";
 import { GuardianStatus } from "@/components/GuardianStatus";
 import { TriageChat } from "@/components/TriageChat";
 import { AegisWatch3D } from "@/components/AegisWatch3D";
-import { HeartRateScanner } from "@/components/HeartRateScanner";
+import { MedicalVitalScanner } from "@/components/MedicalVitalScanner";
 import { VitalCard } from "@/components/VitalCard";
 import { EmergencyButton } from "@/components/EmergencyButton";
 import { EmergencyModal } from "@/components/EmergencyModal";
@@ -26,6 +26,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useRiskScoreEngine } from "@/components/RiskScoreEngine";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
 import { SmartWatchHub } from "@/components/SmartWatchHub";
+import { EnhancedSmartWatchHub } from "@/components/EnhancedSmartWatchHub";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { 
   Shield, 
   Heart, 
@@ -59,6 +61,7 @@ interface HealthReading {
 export const LifeLineGuardian = () => {
   const { toast } = useToast();
   const { riskState, updateRisk, addEnvironmentalRisk, getDiagnostics, engine } = useRiskScoreEngine();
+  const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -390,7 +393,10 @@ export const LifeLineGuardian = () => {
 
   return (
     <div className="min-h-screen bg-background text-foreground font-poppins">
-      <div className="container mx-auto p-4 max-w-4xl">
+      <div className={cn(
+        "container mx-auto p-4",
+        isMobile ? "max-w-full px-2" : "max-w-4xl"
+      )}>
         {/* Header */}
         <div className="text-center mb-6">
           <h1 className="text-4xl font-bold bg-[var(--gradient-primary)] bg-clip-text text-transparent mb-2">
@@ -431,32 +437,74 @@ export const LifeLineGuardian = () => {
 
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-6 bg-card/50">
+          <TabsList className={cn(
+            "grid w-full bg-card/50",
+            isMobile ? "grid-cols-3" : "grid-cols-6"
+          )}>
             <TabsTrigger value="dashboard" className="font-poppins">
-              <Shield className="w-4 h-4 mr-2" />
-              Guardian
+              <Shield className={cn("w-4 h-4", isMobile ? "" : "mr-2")} />
+              {!isMobile && "Guardian"}
             </TabsTrigger>
             <TabsTrigger value="neural" className="font-poppins">
-              <Brain className="w-4 h-4 mr-2" />
-              Neural AI
+              <Brain className={cn("w-4 h-4", isMobile ? "" : "mr-2")} />
+              {!isMobile && "Neural AI"}
             </TabsTrigger>
             <TabsTrigger value="health" className="font-poppins">
-              <Heart className="w-4 h-4 mr-2" />
-              Health
+              <Heart className={cn("w-4 h-4", isMobile ? "" : "mr-2")} />
+              {!isMobile && "Health"}
             </TabsTrigger>
-            <TabsTrigger value="triage" className="font-poppins">
-              <Mic className="w-4 h-4 mr-2" />
-              AI Triage
-            </TabsTrigger>
-            <TabsTrigger value="watch" className="font-poppins">
-              <Watch className="w-4 h-4 mr-2" />
-              Watch Hub
-            </TabsTrigger>
-            <TabsTrigger value="community" className="font-poppins">
-              <Users className="w-4 h-4 mr-2" />
-              Community
-            </TabsTrigger>
+            {!isMobile && (
+              <>
+                <TabsTrigger value="triage" className="font-poppins">
+                  <Mic className="w-4 h-4 mr-2" />
+                  AI Triage
+                </TabsTrigger>
+                <TabsTrigger value="watch" className="font-poppins">
+                  <Watch className="w-4 h-4 mr-2" />
+                  Watch Hub
+                </TabsTrigger>
+                <TabsTrigger value="community" className="font-poppins">
+                  <Users className="w-4 h-4 mr-2" />
+                  Community
+                </TabsTrigger>
+              </>
+            )}
           </TabsList>
+          
+          {/* Mobile Bottom Navigation */}
+          {isMobile && (
+            <div className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-md border-t border-border/50 px-4 pb-safe">
+              <div className="grid grid-cols-3 gap-2 py-2">
+                <Button
+                  variant={activeTab === "triage" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("triage")}
+                  className="flex flex-col items-center p-2 h-auto"
+                >
+                  <Mic className="w-5 h-5 mb-1" />
+                  <span className="text-xs">Triage</span>
+                </Button>
+                <Button
+                  variant={activeTab === "watch" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("watch")}
+                  className="flex flex-col items-center p-2 h-auto"
+                >
+                  <Watch className="w-5 h-5 mb-1" />
+                  <span className="text-xs">Watch</span>
+                </Button>
+                <Button
+                  variant={activeTab === "community" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("community")}
+                  className="flex flex-col items-center p-2 h-auto"
+                >
+                  <Users className="w-5 h-5 mb-1" />
+                  <span className="text-xs">Community</span>
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-6">
@@ -468,7 +516,10 @@ export const LifeLineGuardian = () => {
             />
 
             {/* Vitals Grid */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className={cn(
+              "grid gap-4",
+              isMobile ? "grid-cols-2" : "grid-cols-3"
+            )}>
               <VitalCard
                 title="Heart Rate"
                 value={healthReadings.heartRate.toString()}
@@ -550,7 +601,8 @@ export const LifeLineGuardian = () => {
 
           {/* Neural AI Tab */}
           <TabsContent value="neural" className="space-y-6">
-            <div className="grid gap-6">
+            {isMobile ? (
+              <div className="grid gap-6">
               <AdvancedNeuralAI
                 onStressDetected={(level, confidence) => {
                   if (level === "critical") {
@@ -627,12 +679,62 @@ export const LifeLineGuardian = () => {
                 location={{ lat: 29.3759, lng: 47.9774, city: "Kuwait City" }}
                 emergencyData={{ userProfile, emergencyContacts: [] }}
               />
-            </div>
+              </div>
+            ) : (
+              <Card className="p-6 text-center bg-[var(--gradient-card)] border-cyber-blue/20">
+                <Brain className="w-16 h-16 mx-auto mb-4 text-cyber-purple" />
+                <h3 className="text-xl font-bold font-poppins text-foreground mb-2">
+                  Mobile Device Required
+                </h3>
+                <p className="text-muted-foreground font-poppins">
+                  Neural AI analysis requires mobile device with camera and microphone access.
+                  Please access this feature from a mobile device for facial stress analysis, voice tone detection, and cognitive assessment.
+                </p>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Health Tab */}
           <TabsContent value="health" className="space-y-6">
-            <HeartRateScanner onReadingComplete={handleHeartRateReading} />
+            {isMobile ? (
+              <MedicalVitalScanner 
+                onVitalSigns={(vitals) => {
+                  setHealthReadings(prev => ({
+                    ...prev,
+                    heartRate: typeof vitals.heartRate === 'object' ? vitals.heartRate.bpm : vitals.heartRate,
+                    spO2: typeof vitals.spO2 === 'object' ? vitals.spO2.percentage : vitals.spO2,
+                    temperature: typeof vitals.temperature === 'object' ? vitals.temperature.celsius : vitals.temperature,
+                    confidence: 85,
+                    timestamp: new Date()
+                  }));
+                }}
+                onEmergencyAlert={(alertType, value) => {
+                  addEnvironmentalRisk({
+                    type: "vital",
+                    severity: 9,
+                    confidence: 0.9,
+                    description: `${alertType}: ${value}`,
+                    evidence: { alertType, value }
+                  });
+                  toast({
+                    title: "Medical Emergency Alert",
+                    description: `${alertType}: ${value}`,
+                    variant: "destructive"
+                  });
+                }}
+              />
+            ) : (
+              <Card className="p-6 text-center bg-[var(--gradient-card)] border-cyber-blue/20">
+                <Heart className="w-16 h-16 mx-auto mb-4 text-cyber-red" />
+                <h3 className="text-xl font-bold font-poppins text-foreground mb-2">
+                  Mobile Device Required
+                </h3>
+                <p className="text-muted-foreground font-poppins">
+                  Medical vital scanning requires mobile device with camera and flashlight capabilities.
+                  Please access this feature from a mobile device for accurate heart rate, SpO₂, and temperature monitoring.
+                </p>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Triage Tab */}
@@ -642,8 +744,8 @@ export const LifeLineGuardian = () => {
 
           {/* Watch Hub Tab */}
           <TabsContent value="watch">
-            <AegisWatch3D
-              onEmergencyTrigger={() => handleEmergencyTrigger("Aegis Watch SOS")}
+            <EnhancedSmartWatchHub
+              onEmergencyTrigger={() => handleEmergencyTrigger("Watch SOS")}
               healthReadings={healthReadings}
             />
           </TabsContent>
