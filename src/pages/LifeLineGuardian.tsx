@@ -66,17 +66,17 @@ export const LifeLineGuardian = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   
-  // Core system states  
+  // Core system states - FRESH RESET
   const [guardianStatus, setGuardianStatus] = useState<"safe" | "elevated" | "emergency">("safe");
   const [lastSystemCheck, setLastSystemCheck] = useState(new Date());
   const [activeAlerts, setActiveAlerts] = useState(0);
   
-  // Health monitoring
+  // Health monitoring - RESET TO BASELINE
   const [healthReadings, setHealthReadings] = useState<HealthReading>({
-    heartRate: 72,
-    spO2: 98,
-    temperature: 36.8,
-    confidence: 85,
+    heartRate: 0,
+    spO2: 0,
+    temperature: 0,
+    confidence: 0,
     timestamp: new Date()
   });
   
