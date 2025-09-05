@@ -13,7 +13,7 @@ import { EnhancedQRGenerator } from "@/components/EnhancedQRGenerator";
 import { QRBraceletDesigner } from "@/components/QRBraceletDesigner";
 import { KuwaitMap } from "@/components/KuwaitMap";
 import { VoiceCommands } from "@/components/VoiceCommands";
-import { NeuroAI } from "@/components/NeuroAI";
+import { AdvancedNeuralAI } from "@/components/AdvancedNeuralAI";
 import { DisasterAI } from "@/components/DisasterAI";
 import { AdaptiveSOS } from "@/components/AdaptiveSOS";
 import { SurvivalMode } from "@/components/SurvivalMode";
@@ -551,10 +551,16 @@ export const LifeLineGuardian = () => {
           {/* Neural AI Tab */}
           <TabsContent value="neural" className="space-y-6">
             <div className="grid gap-6">
-              <NeuroAI
-                onStressDetected={(level) => {
+              <AdvancedNeuralAI
+                onStressDetected={(level, confidence) => {
                   if (level === "critical") {
-                    addEnvironmentalRisk({ type: "behavioral", severity: 8, confidence: 0.9, description: "Critical stress detected", evidence: { level } });
+                    addEnvironmentalRisk({ 
+                      type: "behavioral", 
+                      severity: 8, 
+                      confidence: confidence, 
+                      description: "Critical stress detected", 
+                      evidence: { level, confidence } 
+                    });
                     setCurrentSituation("medical");
                     toast({
                       title: "Critical Stress Detected",
@@ -571,6 +577,21 @@ export const LifeLineGuardian = () => {
                       variant: "destructive"
                     });
                   }
+                }}
+                onEmergencyTrigger={() => {
+                  setCurrentSituation("medical");
+                  addEnvironmentalRisk({ 
+                    type: "behavioral", 
+                    severity: 10, 
+                    confidence: 0.95, 
+                    description: "Neural AI triggered emergency", 
+                    evidence: { source: "neural_ai_emergency" } 
+                  });
+                  toast({
+                    title: "EMERGENCY TRIGGERED",
+                    description: "Neural AI detected critical condition requiring immediate attention",
+                    variant: "destructive"
+                  });
                 }}
               />
               
