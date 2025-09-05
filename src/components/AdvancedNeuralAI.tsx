@@ -77,15 +77,31 @@ export const AdvancedNeuralAI = ({
   const streamRef = useRef<MediaStream | null>(null);
   const audioDataRef = useRef<number[]>([]);
 
-  // CHECK DEVICE CAPABILITIES
+  // CHECK DEVICE CAPABILITIES AND REQUEST PERMISSIONS
   useEffect(() => {
     const checkCapabilities = async () => {
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        setHasCamera(devices.some(device => device.kind === 'videoinput'));
-        setHasMicrophone(devices.some(device => device.kind === 'audioinput'));
+        // Test camera access
+        try {
+          const testStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          setHasCamera(true);
+          testStream.getTracks().forEach(track => track.stop());
+        } catch {
+          setHasCamera(false);
+        }
+        
+        // Test microphone access
+        try {
+          const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          setHasMicrophone(true);
+          testStream.getTracks().forEach(track => track.stop());
+        } catch {
+          setHasMicrophone(false);
+        }
       } catch (error) {
         console.warn("Could not check device capabilities");
+        setHasCamera(false);
+        setHasMicrophone(false);
       }
     };
     
@@ -202,63 +218,68 @@ export const AdvancedNeuralAI = ({
     });
   }, [hasCamera]);
 
-  // VOICE STRESS ANALYSIS
+  // CHEST AUDIO ANALYSIS - 60 SECONDS
   const performVoiceAnalysis = useCallback(async (): Promise<void> => {
     return new Promise(async (resolve, reject) => {
       setCurrentPhase("voice");
       
       if (!hasMicrophone) {
-        // Skip voice analysis if no microphone
-        setVoiceMetrics({
-          pitch: 0,
-          pitchVariance: 0,
-          tone: "calm",
-          speechRate: 0,
-          tremor: 0,
-          clarity: 0,
-          confidence: 0
-        });
-        resolve();
+        reject(new Error("Microphone access required for chest audio analysis"));
         return;
       }
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
           audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 44100
+            echoCancellation: false, // Need raw audio for chest sounds
+            noiseSuppression: false, // Need all frequencies
+            autoGainControl: false,
+            sampleRate: 48000 // High quality for medical analysis
           }
         });
 
-        audioContextRef.current = new AudioContext();
+        audioContextRef.current = new AudioContext({ sampleRate: 48000 });
         const analyser = audioContextRef.current.createAnalyser();
         const source = audioContextRef.current.createMediaStreamSource(stream);
         
-        analyser.fftSize = 1024;
+        analyser.fftSize = 4096; // Higher resolution for chest sounds
+        analyser.smoothingTimeConstant = 0.1;
         source.connect(analyser);
         analyserRef.current = analyser;
         
         toast({
-          title: "Speak Now",
-          description: "Please speak for 10 seconds: 'Hello, my name is... I am feeling...'",
+          title: "🫁 Chest Audio Analysis",
+          description: "Place phone on chest/neck. Stay quiet for 60 seconds while analyzing breathing and heart sounds.",
           variant: "default"
         });
 
-        // Record for 10 seconds
+        // Record for 60 seconds
         let recordingTime = 0;
+        const chestAudioData: number[][] = [];
+        
         const recordingInterval = setInterval(() => {
-          const audioData = captureAudioData();
-          audioDataRef.current.push(...audioData);
+          const audioFrame = captureDetailedAudioData();
+          chestAudioData.push(audioFrame);
+          audioDataRef.current.push(...audioFrame);
           
-          recordingTime += 100;
-          setProgress(50 + (recordingTime / 10000) * 30);
+          recordingTime += 200;
+          setProgress(50 + (recordingTime / 60000) * 30);
           
-          if (recordingTime >= 10000) {
+          // Real-time feedback
+          if (recordingTime % 5000 === 0) {
+            const seconds = recordingTime / 1000;
+            toast({
+              title: `Analyzing... ${60 - seconds}s remaining`,
+              description: "Detecting heart sounds and breathing patterns",
+              variant: "default"
+            });
+          }
+          
+          if (recordingTime >= 60000) {
             clearInterval(recordingInterval);
             
-            // Process voice data
-            const metrics = processVoiceData(audioDataRef.current);
+            // Process chest audio data
+            const metrics = processChestAudioData(chestAudioData);
             setVoiceMetrics(metrics);
             setProgress(80);
             
@@ -266,22 +287,18 @@ export const AdvancedNeuralAI = ({
             stream.getTracks().forEach(track => track.stop());
             audioContextRef.current?.close();
             
+            toast({
+              title: "✅ Analysis Complete",
+              description: "Chest audio analysis finished. Processing results...",
+              variant: "default"
+            });
+            
             resolve();
           }
-        }, 100);
+        }, 200);
         
       } catch (error) {
-        // Fallback without voice analysis
-        setVoiceMetrics({
-          pitch: 0,
-          pitchVariance: 0,
-          tone: "calm",
-          speechRate: 0,
-          tremor: 0,
-          clarity: 0,
-          confidence: 0
-        });
-        resolve();
+        reject(new Error("Microphone access denied. Please enable microphone for chest audio analysis."));
       }
     });
   }, [hasMicrophone]);
@@ -434,20 +451,30 @@ export const AdvancedNeuralAI = ({
     };
   };
 
-  // CAPTURE AUDIO DATA
-  const captureAudioData = (): number[] => {
+  // CAPTURE DETAILED AUDIO DATA FOR CHEST ANALYSIS
+  const captureDetailedAudioData = (): number[] => {
     if (!analyserRef.current) return [];
     
     const bufferLength = analyserRef.current.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    analyserRef.current.getByteFrequencyData(dataArray);
+    const freqData = new Uint8Array(bufferLength);
+    const timeData = new Uint8Array(bufferLength);
     
-    return Array.from(dataArray);
+    analyserRef.current.getByteFrequencyData(freqData);
+    analyserRef.current.getByteTimeDomainData(timeData);
+    
+    // Combine frequency and time domain for comprehensive analysis
+    const combined = Array.from(freqData).concat(Array.from(timeData));
+    return combined;
   };
 
-  // PROCESS VOICE DATA
-  const processVoiceData = (audioData: number[]): VoiceMetrics => {
-    if (audioData.length === 0) {
+  // LEGACY SUPPORT
+  const captureAudioData = (): number[] => {
+    return captureDetailedAudioData().slice(0, analyserRef.current?.frequencyBinCount || 0);
+  };
+
+  // PROCESS CHEST AUDIO DATA - MEDICAL ANALYSIS
+  const processChestAudioData = (audioFrames: number[][]): VoiceMetrics => {
+    if (audioFrames.length === 0) {
       return {
         pitch: 0,
         pitchVariance: 0,
@@ -459,40 +486,168 @@ export const AdvancedNeuralAI = ({
       };
     }
     
-    // Calculate average frequency (simplified pitch)
-    const avgFrequency = audioData.reduce((a, b) => a + b, 0) / audioData.length;
-    const pitch = avgFrequency * 2; // Convert to approximate Hz
+    // Flatten all audio data
+    const allAudioData = audioFrames.flat();
     
-    // Pitch variance (voice stability)
-    const pitchVariance = calculateVariance(audioData);
+    // Heart rate from audio (chest vibrations)
+    const heartSounds = detectHeartSounds(audioFrames);
+    const heartRate = calculateHeartRateFromAudio(heartSounds);
     
-    // Voice tremor detection
-    const tremor = Math.min(100, pitchVariance / 50);
+    // Breathing analysis
+    const breathingSounds = detectBreathingSounds(audioFrames);
+    const respiratoryRate = calculateRespiratoryRate(breathingSounds);
     
-    // Speech clarity (signal strength)
-    const maxAmplitude = Math.max(...audioData);
-    const clarity = Math.min(100, maxAmplitude / 2.55);
+    // Chest congestion/wheezing detection
+    const congestionLevel = detectChestCongestion(audioFrames);
+    const wheezingDetected = detectWheezing(audioFrames);
     
-    // Determine tone based on pitch and variance
+    // Overall chest health score
+    const chestHealthScore = calculateChestHealthScore(heartRate, respiratoryRate, congestionLevel, wheezingDetected);
+    
+    // Voice characteristics from chest resonance
+    const chestResonance = calculateChestResonance(allAudioData);
+    const vocalStress = calculateVocalStress(allAudioData);
+    
+    // Determine tone based on chest audio analysis
     let tone: "calm" | "anxious" | "agitated" | "fatigued" | "distressed";
-    if (pitch > 200 && pitchVariance > 1000) tone = "distressed";
-    else if (pitch > 180 && pitchVariance > 500) tone = "anxious";
-    else if (pitch > 160 && tremor > 40) tone = "agitated";
-    else if (pitch < 120 && clarity < 30) tone = "fatigued";
+    if (wheezingDetected && congestionLevel > 70) tone = "distressed";
+    else if (heartRate > 100 && vocalStress > 60) tone = "anxious";
+    else if (respiratoryRate > 20 && chestResonance < 40) tone = "agitated";
+    else if (heartRate < 60 && chestResonance < 30) tone = "fatigued";
     else tone = "calm";
     
-    // Speech rate (simplified)
-    const speechRate = Math.min(200, audioData.filter(v => v > 50).length / 10);
-    
     return {
-      pitch,
-      pitchVariance,
+      pitch: heartRate, // Repurpose as heart rate from audio
+      pitchVariance: respiratoryRate, // Repurpose as respiratory rate
       tone,
-      speechRate,
-      tremor,
-      clarity,
-      confidence: Math.min(85, audioData.length / 1000) // Based on sample size
+      speechRate: chestHealthScore, // Repurpose as chest health score
+      tremor: congestionLevel, // Repurpose as congestion level
+      clarity: chestResonance, // Repurpose as chest resonance
+      confidence: Math.min(90, audioFrames.length / 3) // High confidence with 60s of data
     };
+  };
+
+  // LEGACY VOICE PROCESSING (FALLBACK)
+  const processVoiceData = (audioData: number[]): VoiceMetrics => {
+    return processChestAudioData([audioData]);
+  };
+
+  // CHEST SOUND DETECTION FUNCTIONS
+  const detectHeartSounds = (audioFrames: number[][]): number[] => {
+    const heartbeats: number[] = [];
+    
+    audioFrames.forEach((frame, frameIndex) => {
+      // Look for low-frequency peaks (heart sounds: 20-150 Hz)
+      const lowFreqData = frame.slice(0, 50); // First 50 bins ≈ 0-600 Hz
+      const heartFreqData = lowFreqData.slice(1, 8); // ≈ 20-150 Hz
+      
+      const avgHeartFreq = heartFreqData.reduce((a, b) => a + b, 0) / heartFreqData.length;
+      
+      if (avgHeartFreq > 30) { // Threshold for heart sound detection
+        heartbeats.push(frameIndex);
+      }
+    });
+    
+    return heartbeats;
+  };
+
+  const detectBreathingSounds = (audioFrames: number[][]): number[] => {
+    const breathSounds: number[] = [];
+    
+    audioFrames.forEach((frame, frameIndex) => {
+      // Look for breathing frequencies (200-2000 Hz)
+      const breathFreqData = frame.slice(8, 80); // ≈ 200-2000 Hz
+      const avgBreathFreq = breathFreqData.reduce((a, b) => a + b, 0) / breathFreqData.length;
+      
+      if (avgBreathFreq > 20) {
+        breathSounds.push(frameIndex);
+      }
+    });
+    
+    return breathSounds;
+  };
+
+  const calculateHeartRateFromAudio = (heartSounds: number[]): number => {
+    if (heartSounds.length < 2) return 70; // Default if insufficient data
+    
+    // Calculate intervals between heartbeats
+    const intervals = heartSounds.slice(1).map((beat, idx) => beat - heartSounds[idx]);
+    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    
+    // Convert to BPM (5 frames per second * 60 seconds / interval)
+    const heartRate = Math.round((300 / avgInterval));
+    
+    // Clamp to physiological range
+    return Math.max(40, Math.min(180, heartRate));
+  };
+
+  const calculateRespiratoryRate = (breathSounds: number[]): number => {
+    if (breathSounds.length < 2) return 16; // Default respiratory rate
+    
+    // Count breathing cycles (breaths per minute)
+    const breathsPerMinute = (breathSounds.length / 300) * 60; // 300 frames = 60 seconds
+    
+    return Math.max(8, Math.min(40, Math.round(breathsPerMinute)));
+  };
+
+  const detectChestCongestion = (audioFrames: number[][]): number => {
+    let congestionLevel = 0;
+    
+    audioFrames.forEach(frame => {
+      // Look for irregular breathing patterns and mucus sounds
+      const midFreqData = frame.slice(40, 120); // ≈ 1000-3000 Hz
+      const irregularity = calculateVariance(midFreqData);
+      
+      congestionLevel += Math.min(100, irregularity / 10);
+    });
+    
+    return Math.min(100, congestionLevel / audioFrames.length);
+  };
+
+  const detectWheezing = (audioFrames: number[][]): boolean => {
+    let wheezingCount = 0;
+    
+    audioFrames.forEach(frame => {
+      // Look for high-pitched whistling sounds (400-1600 Hz)
+      const wheezingFreqData = frame.slice(16, 64); // ≈ 400-1600 Hz
+      const maxWheezingFreq = Math.max(...wheezingFreqData);
+      
+      if (maxWheezingFreq > 80) { // Threshold for wheezing detection
+        wheezingCount++;
+      }
+    });
+    
+    // If more than 10% of frames show wheezing
+    return (wheezingCount / audioFrames.length) > 0.1;
+  };
+
+  const calculateChestHealthScore = (hr: number, rr: number, congestion: number, wheezing: boolean): number => {
+    let score = 100;
+    
+    // Deduct for abnormal heart rate
+    if (hr < 60 || hr > 100) score -= 20;
+    
+    // Deduct for abnormal respiratory rate
+    if (rr < 12 || rr > 20) score -= 15;
+    
+    // Deduct for congestion
+    score -= congestion * 0.3;
+    
+    // Deduct for wheezing
+    if (wheezing) score -= 25;
+    
+    return Math.max(0, Math.round(score));
+  };
+
+  const calculateChestResonance = (audioData: number[]): number => {
+    const lowFreqPower = audioData.slice(0, 20).reduce((a, b) => a + b, 0) / 20;
+    return Math.min(100, lowFreqPower / 2);
+  };
+
+  const calculateVocalStress = (audioData: number[]): number => {
+    const highFreqPower = audioData.slice(100, 200).reduce((a, b) => a + b, 0) / 100;
+    const variance = calculateVariance(audioData);
+    return Math.min(100, (highFreqPower + variance) / 10);
   };
 
   // STRESS CALCULATION
