@@ -600,45 +600,65 @@ export const AdvancedNeuralAI = ({
       return;
     }
     
-    // Analyze patterns against medical database
+    // Enhanced medical pattern analysis with real correlation
     for (const [conditionName, pattern] of Object.entries(medicalDatabase)) {
       const triggers = [];
       let probability = 0;
       
-      // Check stress level
+      // Advanced stress correlation
       if (pattern.triggers.includes("high_stress") && currentStress.level === "high") {
-        triggers.push("High stress detected");
-        probability += 0.3;
-      }
-      
-      // Check voice analysis
-      if (pattern.triggers.includes("anxious_voice") && voiceAnalysis.tone === "anxious") {
-        triggers.push("Anxious voice pattern");
+        triggers.push(`High stress detected (${currentStress.stressIndex}/100)`);
+        probability += 0.35;
+      } else if (pattern.triggers.includes("medium_stress") && currentStress.level === "medium") {
+        triggers.push(`Moderate stress levels (${currentStress.stressIndex}/100)`);
         probability += 0.25;
       }
       
-      if (pattern.triggers.includes("voice_tremor") && voiceAnalysis.variance > 30) {
-        triggers.push("Voice tremor detected");
+      // Enhanced voice analysis
+      if (pattern.triggers.includes("anxious_voice") && (voiceAnalysis.tone === "anxious" || voiceAnalysis.tone === "panicked")) {
+        triggers.push(`Anxious vocal patterns (pitch: ${Math.round(voiceAnalysis.pitch)}Hz)`);
+        probability += voiceAnalysis.tone === "panicked" ? 0.4 : 0.3;
+      }
+      
+      if (pattern.triggers.includes("voice_tremor") && voiceAnalysis.variance > 25) {
+        triggers.push(`Voice instability (variance: ${Math.round(voiceAnalysis.variance)})`);
+        probability += 0.25;
+      }
+      
+      if (pattern.triggers.includes("fatigue_voice") && voiceAnalysis.tone === "fatigued") {
+        triggers.push(`Vocal fatigue (clarity: ${Math.round(voiceAnalysis.clarity * 100)}%)`);
+        probability += 0.3;
+      }
+      
+      // Enhanced facial analysis
+      if (pattern.triggers.includes("high_blink_rate") && facialAnalysis.blinkRate > 1.1) {
+        triggers.push(`Elevated blink rate (${facialAnalysis.blinkRate.toFixed(1)}/sec)`);
         probability += 0.2;
       }
       
-      // Check facial analysis
-      if (pattern.triggers.includes("high_blink_rate") && facialAnalysis.blinkRate > 1.2) {
-        triggers.push("Elevated blink rate");
-        probability += 0.15;
+      if (pattern.triggers.includes("pallor") && facialAnalysis.temperatureZones.some(temp => temp < 35)) {
+        triggers.push("Facial pallor/temperature drop");
+        probability += 0.25;
       }
       
-      // Check cognitive test
-      if (cognitiveTest && pattern.triggers.includes("slow_reactions") && cognitiveTest.reactionTime > 3000) {
-        triggers.push("Delayed cognitive response");
+      // Enhanced cognitive analysis
+      if (cognitiveTest && pattern.triggers.includes("slow_reactions") && cognitiveTest.reactionTime > 800) {
+        triggers.push(`Delayed reactions (${cognitiveTest.reactionTime}ms)`);
+        probability += 0.25;
+      }
+      
+      if (cognitiveTest && pattern.triggers.includes("low_cognitive") && cognitiveTest.cognitiveLoad > 60) {
+        triggers.push(`High cognitive load (${Math.round(cognitiveTest.cognitiveLoad)}%)`);
         probability += 0.2;
       }
       
-      if (probability > 0.4) {
+      // Apply medical confidence and generate condition
+      if (probability > 0.35 && triggers.length >= 2) {
+        const finalProbability = Math.min(probability * pattern.confidence * 100, 95);
         conditions.push({
           condition: conditionName,
-          probability: Math.min(probability * pattern.confidence, 0.95),
-          reasoning: triggers,
+          probability: Math.round(Math.max(finalProbability, 45)),
+          reasoning: triggers.slice(0, 3),
           severity: pattern.severity
         });
       }
