@@ -8,6 +8,7 @@ import {
   Play, Pause, RotateCcw, Zap, Volume2, Heart
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 interface AdvancedNeuralAIProps {
   onStressDetected: (level: "low" | "medium" | "high" | "critical", confidence: number) => void;
@@ -59,6 +60,7 @@ export const AdvancedNeuralAI = ({
   onConditionDetected, 
   onEmergencyTrigger 
 }: AdvancedNeuralAIProps) => {
+  const { toast } = useToast();
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [currentStress, setCurrentStress] = useState<StressReading | null>(null);
@@ -123,23 +125,37 @@ export const AdvancedNeuralAI = ({
   };
 
   const startNeuralScan = useCallback(async () => {
+    // Check if device is mobile
+    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (!isMobile) {
+      toast({
+        title: "Mobile Device Required",
+        description: "Neural AI analysis requires a mobile device for optimal sensor access",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setIsScanning(true);
     setScanProgress(0);
     setCurrentPhase("facial");
     
     try {
-      // Request camera with rear camera preference and microphone
+      // Request front camera for facial analysis and microphone
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
-          facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
+          facingMode: 'user', // Front camera for facial analysis
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 },
+          frameRate: { ideal: 30, min: 15 }
         },
         audio: {
+          sampleRate: 44100,
+          channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 44100
+          autoGainControl: true
         }
       });
 
