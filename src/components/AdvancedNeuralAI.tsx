@@ -125,7 +125,6 @@ export const AdvancedNeuralAI = ({
   };
 
   const startNeuralScan = useCallback(async () => {
-    // Check if device is mobile
     const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
     if (!isMobile) {
@@ -142,10 +141,10 @@ export const AdvancedNeuralAI = ({
     setCurrentPhase("facial");
     
     try {
-      // Request front camera for facial analysis and microphone
+      // Enhanced permission request with better error handling
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
-          facingMode: 'user', // Front camera for facial analysis
+          facingMode: 'user',
           width: { ideal: 1280, min: 640 },
           height: { ideal: 720, min: 480 },
           frameRate: { ideal: 30, min: 15 }
@@ -164,9 +163,21 @@ export const AdvancedNeuralAI = ({
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          const checkReady = () => {
+            if (videoRef.current && videoRef.current.videoWidth > 0) {
+              resolve(true);
+            } else {
+              setTimeout(checkReady, 100);
+            }
+          };
+          checkReady();
+        });
       }
 
-      // Setup audio analysis
+      // Enhanced audio context setup
       audioContextRef.current = new AudioContext();
       const source = audioContextRef.current.createMediaStreamSource(stream);
       analyserRef.current = audioContextRef.current.createAnalyser();
@@ -174,13 +185,25 @@ export const AdvancedNeuralAI = ({
       analyserRef.current.smoothingTimeConstant = 0.8;
       source.connect(analyserRef.current);
 
-      // Start analysis phases
+      toast({
+        title: "Neural AI Activated",
+        description: "Camera and microphone access granted - starting analysis",
+      });
+
       await runAnalysisSequence();
 
     } catch (error) {
       console.error("Neural scan access denied:", error);
-      // Fallback to simulation mode
-      await runSimulatedAnalysis();
+      
+      toast({
+        title: "Permission Required",
+        description: "Please allow camera and microphone access for Neural AI analysis",
+        variant: "destructive"
+      });
+      
+      // Reset state
+      setIsScanning(false);
+      setScanProgress(0);
     }
   }, []);
 

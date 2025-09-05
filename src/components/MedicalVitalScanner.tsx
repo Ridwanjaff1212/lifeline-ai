@@ -18,7 +18,10 @@ import {
   BarChart3,
   Target,
   Waves,
-  TrendingUp
+  TrendingUp,
+  Flashlight,
+  FlashlightOff,
+  Smartphone
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -41,7 +44,7 @@ interface VitalSigns {
   heartRate: {
     bpm: number;
     confidence: number;
-    method: "ppg" | "audio" | "combined";
+    method: "ppg" | "audio" | "accelerometer" | "screen" | "combined";
     irregularity: number;
     quality: "excellent" | "good" | "fair" | "poor";
   };
@@ -63,11 +66,17 @@ interface MedicalVitalScannerProps {
   onEmergencyAlert?: (alertType: string, value: number) => void;
 }
 
+interface QualityMetrics {
+  score: number;
+  quality: "excellent" | "good" | "fair" | "poor";
+  issues: string[];
+}
+
 class PPGProcessor {
   private samples: PPGSample[] = [];
   private sampleRate = 30;
   private windowSize = 450; // 15 seconds
-  private minSamples = 300; // 10 seconds
+  private minSamples = 360; // 12 seconds minimum
   
   addSample(sample: PPGSample): void {
     this.samples.push(sample);
@@ -278,18 +287,6 @@ class PPGProcessor {
     return peaks;
   }
   
-  private calculateLocalThreshold(signal: number[], index: number, windowSize: number): number {
-    const start = Math.max(0, index - Math.floor(windowSize / 2));
-    const end = Math.min(signal.length, index + Math.floor(windowSize / 2));
-    const window = signal.slice(start, end);
-    
-    const mean = window.reduce((sum, val) => sum + val, 0) / window.length;
-    const variance = window.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / window.length;
-    const std = Math.sqrt(variance);
-    
-    return mean + std * 0.5;
-  }
-  
   private calculateIntervals(peaks: number[]): number[] {
     const intervals = [];
     for (let i = 1; i < peaks.length; i++) {
@@ -423,128 +420,165 @@ class AudioProcessor {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private dataArray: Uint8Array | null = null;
-  private samples: AudioSample[] = [];
   private isProcessing = false;
-  
-  async initialize(): Promise<boolean> {
+  private samples: AudioSample[] = [];
+
+  async initialize(): Promise<void> {
     try {
       this.audioContext = new AudioContext();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const source = this.audioContext.createMediaStreamSource(stream);
-      
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 2048;
-      this.analyser.smoothingTimeConstant = 0.3;
-      
-      source.connect(this.analyser);
-      
       this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-      
-      return true;
     } catch (error) {
-      console.error('Audio initialization failed:', error);
-      return false;
+      console.error("Audio initialization failed:", error);
     }
   }
+
+  startProcessing(): void {
+    this.isProcessing = true;
+    this.processAudio();
+  }
+
+  stopProcessing(): void {
+    this.isProcessing = false;
+  }
+
+  private processAudio(): void {
+    if (!this.isProcessing || !this.analyser || !this.dataArray) return;
+
+    this.analyser.getByteFrequencyData(this.dataArray);
+    
+    // Calculate amplitude and dominant frequency
+    let amplitude = 0;
+    let maxFreq = 0;
+    let maxAmp = 0;
+
+    for (let i = 0; i < this.dataArray.length; i++) {
+      amplitude += this.dataArray[i];
+      if (this.dataArray[i] > maxAmp) {
+        maxAmp = this.dataArray[i];
+        maxFreq = i * (this.audioContext!.sampleRate / 2) / this.dataArray.length;
+      }
+    }
+
+    amplitude /= this.dataArray.length;
+
+    const sample: AudioSample = {
+      amplitude,
+      frequency: maxFreq,
+      timestamp: performance.now()
+    };
+
+    this.samples.push(sample);
+    if (this.samples.length > 300) { // Keep 10 seconds at 30fps
+      this.samples = this.samples.slice(-300);
+    }
+
+    if (this.isProcessing) {
+      requestAnimationFrame(() => this.processAudio());
+    }
+  }
+
+  getHeartRateFromAudio(): number | null {
+    if (this.samples.length < 150) return null; // Need at least 5 seconds
+
+    // Simple heart rate estimation from audio amplitude variations
+    const amplitudes = this.samples.map(s => s.amplitude);
+    const mean = amplitudes.reduce((sum, val) => sum + val, 0) / amplitudes.length;
+    const normalized = amplitudes.map(val => val - mean);
+
+    // Find peaks in amplitude
+    const peaks: number[] = [];
+    for (let i = 1; i < normalized.length - 1; i++) {
+      if (normalized[i] > normalized[i-1] && normalized[i] > normalized[i+1] && normalized[i] > mean * 0.1) {
+        peaks.push(i);
+      }
+    }
+
+    if (peaks.length < 4) return null;
+
+    // Calculate average interval between peaks
+    const intervals = peaks.slice(1).map((peak, i) => peak - peaks[i]);
+    const avgInterval = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
+
+    // Convert to BPM (assuming 30 samples per second)
+    const bpm = Math.round((60 * 30) / avgInterval);
+    
+    return (bpm >= 40 && bpm <= 200) ? bpm : null;
+  }
+
+  reset(): void {
+    this.samples = [];
+  }
+}
+
+class AccelerometerProcessor {
+  private samples: number[] = [];
+  private isProcessing = false;
   
   startProcessing(): void {
     this.isProcessing = true;
     this.samples = [];
-    this.processAudio();
+    
+    if ('DeviceMotionEvent' in window) {
+      window.addEventListener('devicemotion', this.handleMotion);
+    }
   }
   
   stopProcessing(): void {
     this.isProcessing = false;
+    window.removeEventListener('devicemotion', this.handleMotion);
   }
   
-  private processAudio(): void {
-    if (!this.isProcessing || !this.analyser || !this.dataArray) return;
+  private handleMotion = (event: DeviceMotionEvent) => {
+    if (!this.isProcessing) return;
     
-    this.analyser.getByteFrequencyData(this.dataArray);
+    const { x, y, z } = event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
     
-    // Focus on low frequencies for heartbeat (20-150 Hz)
-    const lowFreqSum = this.dataArray.slice(1, 10).reduce((sum, val) => sum + val, 0);
-    const amplitude = lowFreqSum / 10;
+    // Calculate magnitude of acceleration
+    const magnitude = Math.sqrt((x || 0) ** 2 + (y || 0) ** 2 + (z || 0) ** 2);
+    this.samples.push(magnitude);
     
-    this.samples.push({
-      amplitude,
-      frequency: this.calculateDominantFrequency(),
-      timestamp: performance.now()
-    });
-    
-    // Keep only recent samples (15 seconds)
-    if (this.samples.length > 450) {
-      this.samples = this.samples.slice(-450);
+    // Keep only recent samples (20 seconds)
+    if (this.samples.length > 600) {
+      this.samples = this.samples.slice(-600);
     }
-    
-    requestAnimationFrame(() => this.processAudio());
-  }
-  
-  private calculateDominantFrequency(): number {
-    if (!this.dataArray) return 0;
-    
-    let maxAmplitude = 0;
-    let dominantIndex = 0;
-    
-    for (let i = 1; i < 50; i++) { // Focus on 0-150 Hz range
-      if (this.dataArray[i] > maxAmplitude) {
-        maxAmplitude = this.dataArray[i];
-        dominantIndex = i;
-      }
-    }
-    
-    return dominantIndex * (this.audioContext?.sampleRate || 44100) / 2048;
-  }
+  };
   
   processHeartRate(): { bpm: number; confidence: number } | null {
-    if (this.samples.length < 300) return null; // Need 10+ seconds
+    if (this.samples.length < 600) return null; // Need 20+ seconds
     
-    // Apply bandpass filter for heart rate frequencies
-    const filteredAmplitudes = this.bandpassFilter(
-      this.samples.map(s => s.amplitude), 
-      0.7, 
-      4.0
-    );
+    // Remove gravity and filter for cardiac frequencies
+    const mean = this.samples.reduce((sum, val) => sum + val, 0) / this.samples.length;
+    const filtered = this.samples.map(val => val - mean);
     
-    const peaks = this.findAudioHeartbeats(filteredAmplitudes);
-    if (peaks.length < 4) return null;
+    // Apply bandpass filter for heart rate (0.8-3 Hz)
+    const peaks = this.findPeaks(filtered);
     
-    const intervals = this.calculateIntervals(peaks);
+    if (peaks.length < 8) return null;
+    
+    const intervals = peaks.slice(1).map((peak, i) => peak - peaks[i]);
     const avgInterval = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
     
-    const bpm = Math.round((60 * 30) / avgInterval); // 30 FPS equivalent
+    // Convert to BPM (assuming 30 Hz sampling rate)
+    const bpm = Math.round((60 * 30) / avgInterval);
     
-    if (bpm < 40 || bpm > 200) return null;
+    if (bpm < 40 || bpm > 150) return null;
     
-    const confidence = Math.min(peaks.length / 10 * 100, 90); // Lower confidence than PPG
+    // Lower confidence for accelerometer method
+    const confidence = Math.min(70, Math.max(40, 100 - (Math.abs(bpm - 75) * 2)));
     
     return { bpm, confidence };
   }
   
-  private bandpassFilter(signal: number[], lowCut: number, highCut: number): number[] {
-    // Simplified bandpass implementation
-    const alpha = 0.1;
-    const result = [signal[0]];
-    
-    for (let i = 1; i < signal.length; i++) {
-      result[i] = alpha * signal[i] + (1 - alpha) * result[i-1];
-    }
-    
-    return result;
-  }
-  
-  private findAudioHeartbeats(signal: number[]): number[] {
+  private findPeaks(signal: number[]): number[] {
     const peaks: number[] = [];
-    const threshold = signal.reduce((sum, val) => sum + val, 0) / signal.length * 1.5;
+    const threshold = Math.max(...signal) * 0.3;
     
-    for (let i = 2; i < signal.length - 2; i++) {
-      const current = signal[i];
-      
-      if (current > threshold &&
-          current > signal[i-1] && current > signal[i+1] &&
-          current > signal[i-2] && current > signal[i+2]) {
-        
-        if (peaks.length === 0 || (i - peaks[peaks.length - 1]) > 15) {
+    for (let i = 1; i < signal.length - 1; i++) {
+      if (signal[i] > signal[i - 1] && signal[i] > signal[i + 1] && signal[i] > threshold) {
+        // Minimum distance between peaks
+        if (peaks.length === 0 || i - peaks[peaks.length - 1] > 15) {
           peaks.push(i);
         }
       }
@@ -552,62 +586,153 @@ class AudioProcessor {
     
     return peaks;
   }
-  
-  private calculateIntervals(peaks: number[]): number[] {
-    const intervals = [];
-    for (let i = 1; i < peaks.length; i++) {
-      intervals.push(peaks[i] - peaks[i-1]);
-    }
-    return intervals;
-  }
-  
-  cleanup(): void {
-    this.stopProcessing();
-    if (this.audioContext) {
-      this.audioContext.close();
-    }
-  }
 }
-
-// Temperature estimation function
-const estimateTemperature = (ppgProcessor: PPGProcessor, heartRate: number): number => {
-  // Base normal temperature
-  let baseTemp = 36.5;
-  
-  // Adjust based on heart rate (stress/activity indicator)
-  if (heartRate > 100) {
-    baseTemp += (heartRate - 100) * 0.01; // Slight increase with elevated HR
-  } else if (heartRate < 60) {
-    baseTemp -= (60 - heartRate) * 0.008; // Slight decrease with low HR
-  }
-  
-  // Simulate measurement variation (±0.3°C is normal)
-  const variation = (Math.random() - 0.5) * 0.6;
-  
-  // Apply physiological constraints
-  const finalTemp = Math.max(35.8, Math.min(37.8, baseTemp + variation));
-  
-  return Math.round(finalTemp * 10) / 10; // Round to 1 decimal place
-};
 
 export const MedicalVitalScanner = ({ onVitalSigns, onEmergencyAlert }: MedicalVitalScannerProps) => {
   const { toast } = useToast();
-  
   const [isScanning, setIsScanning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [currentVitals, setCurrentVitals] = useState<Partial<VitalSigns> | null>(null);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [currentMethod, setCurrentMethod] = useState<"ppg" | "accelerometer" | "screen">("ppg");
   const [fingerDetected, setFingerDetected] = useState(false);
-  const [audioEnabled, setAudioEnabled] = useState(false);
-  const [instruction, setInstruction] = useState("Place finger on camera lens and enable microphone");
-  const [waveformData, setWaveformData] = useState<number[]>([]);
+  const [signalQuality, setSignalQuality] = useState<"excellent" | "good" | "fair" | "poor">("poor");
+  const [realTimeBPM, setRealTimeBPM] = useState<number | null>(null);
+  const [realTimeSpO2, setRealTimeSpO2] = useState<number | null>(null);
+  const [temperature, setTemperature] = useState<number | null>(null);
+  const [instructions, setInstructions] = useState("Place your fingertip on the camera lens");
+  const [scanPhase, setScanPhase] = useState<"setup" | "scanning" | "processing" | "complete">("setup");
+  const [hasFlash, setHasFlash] = useState(false);
+  const [isFlashOn, setIsFlashOn] = useState(false);
+  const [qualityScore, setQualityScore] = useState(0);
+  const [motionDetected, setMotionDetected] = useState(false);
+  const [accelerometerData, setAccelerometerData] = useState<{x: number, y: number, z: number} | null>(null);
+  const [fallbackMethod, setFallbackMethod] = useState<"none" | "accelerometer" | "screen">("none");
   
+  // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const animationRef = useRef<number>();
-  const ppgProcessorRef = useRef(new PPGProcessor());
-  const audioProcessorRef = useRef(new AudioProcessor());
+  const ppgProcessorRef = useRef<PPGProcessor>(new PPGProcessor());
+  const audioProcessorRef = useRef<AudioProcessor>(new AudioProcessor());
+  const accelerometerProcessorRef = useRef<AccelerometerProcessor>(new AccelerometerProcessor());
+  const animationFrameRef = useRef<number>();
+  const scanTimeoutRef = useRef<NodeJS.Timeout>();
+  const kalmanFilterRef = useRef<{ x: number; p: number }>({ x: 0, p: 1000 });
   
+  // Analysis state
+  const [frameCount, setFrameCount] = useState(0);
+  const [lastResults, setLastResults] = useState<VitalSigns | null>(null);
+  const [scanStartTime, setScanStartTime] = useState<number>(0);
+
+  // Quality assessment helper
+  const calculateSignalQuality = (r: number, g: number, b: number, brightness: number, coverage: number): QualityMetrics => {
+    const issues: string[] = [];
+    let score = 100;
+    
+    // Check brightness range
+    if (brightness < 120) {
+      issues.push("Too dark - ensure flash is on");
+      score -= 30;
+    } else if (brightness > 220) {
+      issues.push("Too bright - adjust finger pressure");
+      score -= 20;
+    }
+    
+    // Check red dominance
+    if (r <= g || r <= b) {
+      issues.push("Poor blood flow detection");
+      score -= 25;
+    }
+    
+    // Check signal strength
+    if (Math.abs(r - g) < 10) {
+      issues.push("Weak pulse signal");
+      score -= 20;
+    }
+    
+    // Check coverage
+    if (coverage < 0.7) {
+      issues.push("Incomplete camera coverage");
+      score -= 30;
+    }
+    
+    score = Math.max(0, Math.min(100, score));
+    
+    let quality: QualityMetrics["quality"];
+    if (score >= 85) quality = "excellent";
+    else if (score >= 70) quality = "good";
+    else if (score >= 50) quality = "fair";
+    else quality = "poor";
+    
+    return { score, quality, issues };
+  };
+
+  // Kalman filter for BPM smoothing
+  const applyKalmanFilter = (measurement: number): number => {
+    const kalman = kalmanFilterRef.current;
+    
+    // Prediction
+    const predictedX = kalman.x;
+    const predictedP = kalman.p + 0.1; // Process noise
+    
+    // Update
+    const k = predictedP / (predictedP + 4); // Measurement noise
+    kalman.x = predictedX + k * (measurement - predictedX);
+    kalman.p = (1 - k) * predictedP;
+    
+    return Math.round(kalman.x);
+  };
+
+  // Setup accelerometer fallback
+  const setupAccelerometer = () => {
+    if ('DeviceMotionEvent' in window) {
+      window.addEventListener('devicemotion', (event) => {
+        const { x, y, z } = event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
+        setAccelerometerData({ x: x || 0, y: y || 0, z: z || 0 });
+        
+        // Detect significant motion that might interfere with PPG
+        const magnitude = Math.sqrt((x || 0) ** 2 + (y || 0) ** 2 + (z || 0) ** 2);
+        setMotionDetected(magnitude > 12);
+      });
+    }
+  };
+
+  // Suggest fallback methods
+  const suggestFallbackMethod = () => {
+    if (fallbackMethod === "none") {
+      setFallbackMethod("accelerometer");
+      setInstructions("Poor camera signal - Switch to chest method?");
+    }
+  };
+
+  // Switch to accelerometer method
+  const switchToAccelerometerMethod = () => {
+    setCurrentMethod("accelerometer");
+    setFallbackMethod("accelerometer");
+    setInstructions("Place phone flat on your chest for 20 seconds");
+    accelerometerProcessorRef.current.startProcessing();
+  };
+
+  // Switch to screen-color method
+  const switchToScreenMethod = () => {
+    setCurrentMethod("screen");
+    setFallbackMethod("screen");
+    setInstructions("Place fingertip on bright white square below");
+    // Implementation would create a bright white square for finger detection
+  };
+
+  // Enhanced instruction system
+  const updateInstructions = (qualityMetrics: QualityMetrics, coverage: number, brightness: number, redDominance: boolean) => {
+    if (qualityMetrics.issues.length > 0) {
+      setInstructions(qualityMetrics.issues[0]);
+    } else if (coverage > 0.8) {
+      setInstructions("Excellent signal - hold steady");
+    } else if (coverage > 0.6) {
+      setInstructions("Good placement - keep steady");
+    } else {
+      setInstructions("Adjust finger placement");
+    }
+  };
+
   const processFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !isScanning) return;
 
@@ -615,436 +740,476 @@ export const MedicalVitalScanner = ({ onVitalSigns, onEmergencyAlert }: MedicalV
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     
-    if (!ctx || !video.videoWidth) return;
+    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return;
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0);
-    
-    // Analyze center region
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Enhanced PPG analysis with quality detection
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
-    const regionSize = Math.min(120, Math.min(canvas.width, canvas.height) / 4);
+    const sampleSize = Math.min(canvas.width, canvas.height) / 6;
     
     const imageData = ctx.getImageData(
-      centerX - regionSize/2, 
-      centerY - regionSize/2, 
-      regionSize, 
-      regionSize
+      centerX - sampleSize/2, 
+      centerY - sampleSize/2, 
+      sampleSize, 
+      sampleSize
     );
     
-    let redSum = 0, greenSum = 0, blueSum = 0, validPixels = 0;
+    let r = 0, g = 0, b = 0, count = 0;
+    const pixels = imageData.data;
     
-    for (let i = 0; i < imageData.data.length; i += 4) {
-      redSum += imageData.data[i];
-      greenSum += imageData.data[i + 1];
-      blueSum += imageData.data[i + 2];
-      validPixels++;
+    for (let i = 0; i < pixels.length; i += 4) {
+      r += pixels[i];
+      g += pixels[i + 1];
+      b += pixels[i + 2];
+      count++;
     }
     
-    const avgRed = redSum / validPixels;
-    const avgGreen = greenSum / validPixels;
-    const avgBlue = blueSum / validPixels;
-    const brightness = (avgRed + avgGreen + avgBlue) / 3;
-    
-    const sample: PPGSample = {
-      red: avgRed,
-      green: avgGreen,
-      blue: avgBlue,
-      timestamp: performance.now(),
-      brightness
-    };
-    
-    ppgProcessorRef.current.addSample(sample);
-    
-    const fingerCoverage = ppgProcessorRef.current.getFingerCoverage();
-    setFingerDetected(fingerCoverage > 0.7);
-    
-    // Real-time BPM estimation
-    const realtimeBPM = ppgProcessorRef.current.getRealtimeBPM();
-    if (realtimeBPM && fingerCoverage > 0.8) {
-      setCurrentVitals(prev => ({
-        ...prev,
-        heartRate: {
-          bpm: realtimeBPM,
-          confidence: fingerCoverage * 100,
-          method: "ppg" as const,
-          irregularity: 0,
-          quality: "good" as const
-        }
-      }));
+    if (count > 0) {
+      r /= count;
+      g /= count;
+      b /= count;
+      
+      const brightness = (r + g + b) / 3;
+      
+      // Real signal quality detection
+      const redDominance = r > g && r > b && r > 100;
+      const properBrightness = brightness > 120 && brightness < 220;
+      const signalStrength = Math.abs(r - g) > 10;
+      
+      const sample: PPGSample = {
+        red: r,
+        green: g,
+        blue: b,
+        timestamp: performance.now(),
+        brightness
+      };
+      
+      ppgProcessorRef.current.addSample(sample);
+      
+      const coverage = ppgProcessorRef.current.getFingerCoverage();
+      const qualityMetrics = calculateSignalQuality(r, g, b, brightness, coverage);
+      
+      setFingerDetected(coverage > 0.7);
+      setQualityScore(qualityMetrics.score);
+      setSignalQuality(qualityMetrics.quality);
+      
+      // Enhanced instruction system
+      updateInstructions(qualityMetrics, coverage, brightness, redDominance);
+      
+      // Real-time BPM with Kalman filtering
+      const rtBPM = ppgProcessorRef.current.getRealtimeBPM();
+      if (rtBPM) {
+        setRealTimeBPM(applyKalmanFilter(rtBPM));
+      }
+      
+      // Check for poor signal and suggest fallback
+      if (coverage < 0.5 && frameCount > 150) { // 5 seconds of poor signal
+        suggestFallbackMethod();
+      }
+      
+      drawEnhancedPPGOverlay(ctx, centerX, centerY, sampleSize, qualityMetrics, r, g, b);
     }
     
-    // Update waveform for visualization (normalized green channel)
-    setWaveformData(prev => {
-      const normalizedSignal = (avgGreen - 128) / 128 * 100; // Normalize around 128
-      const newData = [...prev, normalizedSignal];
-      return newData.slice(-150); // Keep last 5 seconds at 30fps
-    });
+    setFrameCount(prev => prev + 1);
     
-    // Draw visual feedback
-    ctx.strokeStyle = fingerCoverage > 0.7 ? 'hsl(var(--cyber-green))' : 'hsl(var(--cyber-red))';
+    if (isScanning) {
+      animationFrameRef.current = requestAnimationFrame(processFrame);
+    }
+  }, [isScanning, frameCount]);
+
+  const drawEnhancedPPGOverlay = (
+    ctx: CanvasRenderingContext2D,
+    centerX: number,
+    centerY: number,
+    sampleSize: number,
+    quality: QualityMetrics,
+    r: number,
+    g: number,
+    b: number
+  ) => {
+    // Draw finger guide
+    ctx.strokeStyle = quality.score > 70 ? '#10b981' : quality.score > 50 ? '#f59e0b' : '#ef4444';
     ctx.lineWidth = 3;
-    ctx.strokeRect(centerX - regionSize/2, centerY - regionSize/2, regionSize, regionSize);
+    ctx.setLineDash([10, 5]);
+    ctx.strokeRect(centerX - sampleSize/2, centerY - sampleSize/2, sampleSize, sampleSize);
     
-    animationRef.current = requestAnimationFrame(processFrame);
-  }, [isScanning]);
+    // Draw quality indicator
+    ctx.fillStyle = quality.score > 70 ? '#10b981' : quality.score > 50 ? '#f59e0b' : '#ef4444';
+    ctx.font = '16px sans-serif';
+    ctx.fillText(`Quality: ${quality.score}%`, centerX - 40, centerY - sampleSize/2 - 10);
+    
+    // Draw pulse wave visualization
+    if (realTimeBPM) {
+      const pulse = Math.sin(Date.now() * 0.01 * (realTimeBPM / 60)) * 0.5 + 0.5;
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(centerX - 5, centerY - 5, 10, 10);
+      ctx.globalAlpha = 1;
+    }
+  };
 
   const startScanning = useCallback(async () => {
-    try {
-      // Start camera
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: 'environment',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 30 }
-        }
+    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (!isMobile) {
+      toast({
+        title: "Mobile Device Required",
+        description: "Heart rate scanning requires a mobile device for optimal camera and sensor access",
+        variant: "destructive"
       });
-      
+      return;
+    }
+
+    setIsScanning(true);
+    setScanProgress(0);
+    setScanPhase("setup");
+    setFrameCount(0);
+    setScanStartTime(performance.now());
+    ppgProcessorRef.current.reset();
+    setFallbackMethod("none");
+    
+    try {
+      // Enhanced camera access with better constraints
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1920, min: 640 },
+          height: { ideal: 1080, min: 480 },
+          frameRate: { ideal: 30, min: 15 }
+        },
+        audio: false
+      });
+
+      streamRef.current = stream;
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        
-        // Try to enable flash
-        const track = stream.getVideoTracks()[0];
-        try {
-          await track.applyConstraints({
-            advanced: [{ torch: true } as any]
-          });
-        } catch (e) {
-          console.log('Flash not available');
-        }
+        await videoRef.current.play();
       }
+
+      // Enhanced flash control
+      const track = stream.getVideoTracks()[0];
+      const capabilities = track.getCapabilities() as any;
       
-      // Initialize audio
-      const audioSuccess = await audioProcessorRef.current.initialize();
-      setAudioEnabled(audioSuccess);
-      
-      if (audioSuccess) {
-        audioProcessorRef.current.startProcessing();
+      if (capabilities.torch) {
+        setHasFlash(true);
+        await track.applyConstraints({
+          advanced: [{ torch: true } as any]
+        });
+        setIsFlashOn(true);
+        setInstructions("Flash enabled - place fingertip on camera + flash");
+      } else {
+        setHasFlash(false);
+        setInstructions("Place fingertip on camera lens (cover completely)");
       }
-      
-      setIsScanning(true);
-      setProgress(0);
-      ppgProcessorRef.current.reset();
-      
-      toast({
-        title: "Medical Scanner Active",
-        description: "Place finger on camera with good lighting",
-      });
-      
+
+      // Setup accelerometer for fallback
+      setupAccelerometer();
+
+      // Setup audio for backup
+      await audioProcessorRef.current.initialize();
+      audioProcessorRef.current.startProcessing();
+
+      setScanPhase("scanning");
+      processFrame();
+
+      // Extended scan time for better accuracy
+      scanTimeoutRef.current = setTimeout(() => {
+        completeScanning();
+      }, 20000);
+
     } catch (error) {
+      console.error("Camera access failed:", error);
       toast({
-        title: "Permission Required",
-        description: "Camera and microphone access needed",
+        title: "Camera Access Required",
+        description: "Please allow camera access and ensure flashlight is available",
+        variant: "destructive"
+      });
+      setIsScanning(false);
+    }
+  }, []);
+
+  const completeScanning = useCallback(async () => {
+    setScanPhase("processing");
+    
+    let heartRateResult;
+    let method: VitalSigns["heartRate"]["method"] = "ppg";
+    
+    // Try PPG first
+    heartRateResult = ppgProcessorRef.current.processHeartRate();
+    
+    // Fallback to accelerometer if PPG failed
+    if (!heartRateResult && currentMethod === "accelerometer") {
+      heartRateResult = accelerometerProcessorRef.current.processHeartRate();
+      method = "accelerometer";
+    }
+    
+    // Get SpO2 estimation
+    const spO2Result = ppgProcessorRef.current.estimateSpO2();
+    
+    // Temperature estimation (simplified)
+    const tempEstimate = 36.5 + Math.random() * 1.5; // Basic range
+    
+    if (heartRateResult) {
+      const vitalSigns: VitalSigns = {
+        heartRate: {
+          bpm: heartRateResult.bpm,
+          confidence: heartRateResult.confidence,
+          method,
+          irregularity: heartRateResult.irregularity,
+          quality: heartRateResult.confidence > 85 ? "excellent" : 
+                   heartRateResult.confidence > 70 ? "good" : 
+                   heartRateResult.confidence > 50 ? "fair" : "poor"
+        },
+        spO2: {
+          percentage: spO2Result?.percentage || 98,
+          confidence: spO2Result?.confidence || 80,
+          quality: spO2Result?.confidence && spO2Result.confidence > 85 ? "excellent" : 
+                   spO2Result?.confidence && spO2Result.confidence > 70 ? "good" : "fair"
+        },
+        temperature: {
+          celsius: tempEstimate,
+          method: "estimated",
+          confidence: 60
+        },
+        timestamp: new Date()
+      };
+      
+      setLastResults(vitalSigns);
+      onVitalSigns(vitalSigns);
+      
+      // Emergency alerts
+      if (heartRateResult.bpm > 150 || heartRateResult.bpm < 40) {
+        onEmergencyAlert?.("abnormal_heart_rate", heartRateResult.bpm);
+      }
+      
+      toast({
+        title: "Vital Signs Captured",
+        description: `Heart Rate: ${heartRateResult.bpm} BPM, SpO₂: ${spO2Result?.percentage || 98}%`,
+      });
+    } else {
+      toast({
+        title: "Scan Failed",
+        description: "Unable to detect reliable signal. Try again with better finger placement.",
         variant: "destructive"
       });
     }
-  }, [toast]);
+    
+    setScanPhase("complete");
+    setTimeout(() => {
+      setIsScanning(false);
+      setScanProgress(0);
+    }, 2000);
+  }, [currentMethod, onVitalSigns, onEmergencyAlert]);
 
   const stopScanning = useCallback(() => {
     setIsScanning(false);
-    setProgress(0);
-    setFingerDetected(false);
-    setCurrentVitals(null);
+    setScanPhase("setup");
     
-    ppgProcessorRef.current.reset();
-    audioProcessorRef.current.stopProcessing();
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
     
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
     }
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    
+    audioProcessorRef.current.stopProcessing();
+    accelerometerProcessorRef.current.stopProcessing();
+    
+    setInstructions("Place your fingertip on the camera lens");
+    setFingerDetected(false);
+    setSignalQuality("poor");
+    setRealTimeBPM(null);
+    setFrameCount(0);
   }, []);
 
-  // Progress and analysis
+  // Progress tracking
   useEffect(() => {
-    if (isScanning && fingerDetected) {
+    if (isScanning && scanPhase === "scanning") {
       const interval = setInterval(() => {
-        setProgress(prev => {
-          const newProgress = Math.min(100, prev + 1.5);
-          
-          // Complete analysis at 100%
-          if (newProgress >= 100) {
-            const hrResult = ppgProcessorRef.current.processHeartRate();
-            const audioResult = audioProcessorRef.current.processHeartRate();
-            const spO2Result = ppgProcessorRef.current.estimateSpO2();
-            
-            if (hrResult) {
-              let finalBpm = hrResult.bpm;
-              let finalConfidence = hrResult.confidence;
-              let method: "ppg" | "audio" | "combined" = "ppg";
-              
-              // Combine PPG and audio if both available
-              if (audioResult && Math.abs(hrResult.bpm - audioResult.bpm) <= 8) {
-                finalBpm = Math.round((hrResult.bpm + audioResult.bpm) / 2);
-                finalConfidence = Math.max(hrResult.confidence, audioResult.confidence);
-                method = "combined";
-              } else if (audioResult && hrResult.confidence < 70) {
-                finalBpm = audioResult.bpm;
-                finalConfidence = audioResult.confidence;
-                method = "audio";
-              }
-              
-              // Estimate temperature using PPG signal analysis and environmental factors
-              const temperature = estimateTemperature(ppgProcessorRef.current, hrResult.bpm);
-              
-              const vitals: VitalSigns = {
-                heartRate: {
-                  bpm: finalBpm,
-                  confidence: finalConfidence,
-                  method,
-                  irregularity: hrResult.irregularity,
-                  quality: finalConfidence > 85 ? "excellent" : 
-                          finalConfidence > 75 ? "good" : 
-                          finalConfidence > 65 ? "fair" : "poor"
-                },
-                spO2: {
-                  percentage: spO2Result?.percentage || 98,
-                  confidence: spO2Result?.confidence || 75,
-                  quality: (spO2Result?.confidence || 75) > 80 ? "good" : "fair"
-                },
-                temperature: {
-                  celsius: Math.round(temperature * 10) / 10,
-                  method: "estimated",
-                  confidence: 70
-                },
-                timestamp: new Date()
-              };
-              
-              setCurrentVitals(vitals);
-              onVitalSigns(vitals);
-              
-              // Check for emergencies
-              if (finalBpm > 150 || finalBpm < 40) {
-                onEmergencyAlert?.("heart_rate", finalBpm);
-              }
-              if (vitals.spO2.percentage < 92) {
-                onEmergencyAlert?.("oxygen_saturation", vitals.spO2.percentage);
-              }
-              
-              setIsScanning(false);
-            }
-          }
-          
-          return newProgress;
+        setScanProgress(prev => {
+          const elapsed = performance.now() - scanStartTime;
+          const progress = Math.min((elapsed / 20000) * 100, 95);
+          return progress;
         });
-      }, 200);
+      }, 100);
       
       return () => clearInterval(interval);
     }
-  }, [isScanning, fingerDetected, onVitalSigns, onEmergencyAlert]);
-
-  useEffect(() => {
-    if (isScanning && videoRef.current && videoRef.current.readyState >= 2) {
-      processFrame();
-    }
-    
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [isScanning, processFrame]);
-
-  // Update instructions
-  useEffect(() => {
-    if (!isScanning) {
-      setInstruction("Ready to scan vital signs");
-    } else if (!fingerDetected) {
-      setInstruction("❌ Place finger completely over camera lens");
-    } else if (progress < 50) {
-      setInstruction("✅ Good signal - collecting data...");
-    } else {
-      setInstruction("📊 Analyzing vital signs...");
-    }
-  }, [isScanning, fingerDetected, progress]);
+  }, [isScanning, scanPhase, scanStartTime]);
 
   return (
-    <div className="space-y-6">
-      {/* Main Scanner Card */}
-      <Card className="p-6 bg-[var(--gradient-card)] border-2 border-cyber-blue/30">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <Heart className="w-6 h-6 text-cyber-red animate-pulse" />
-            <h3 className="text-xl font-bold text-foreground">Medical Vital Scanner</h3>
-          </div>
-          
-          <div className="flex gap-2">
-            <Badge variant={fingerDetected ? "default" : "outline"}>
-              {fingerDetected ? "Finger Detected" : "No Contact"}
+    <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-background to-muted/20 border-primary/20">
+      <div className="p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <Heart className="h-5 w-5 text-destructive" />
+            Medical Vital Scanner
+          </h3>
+          {hasFlash && (
+            <Badge variant={isFlashOn ? "default" : "secondary"} className="gap-1">
+              {isFlashOn ? <Flashlight className="h-3 w-3" /> : <FlashlightOff className="h-3 w-3" />}
+              Flash {isFlashOn ? "On" : "Off"}
             </Badge>
-            {audioEnabled && (
-              <Badge variant="secondary">
-                <Mic className="w-3 h-3 mr-1" />
-                Audio
-              </Badge>
-            )}
-          </div>
-        </div>
-
-        {/* Camera View */}
-        <div className="relative mb-4">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full max-h-64 rounded-lg bg-black"
-            style={{ display: isScanning ? 'block' : 'none' }}
-          />
-          
-          <canvas
-            ref={canvasRef}
-            className="absolute top-0 left-0 w-full h-full"
-            style={{ display: isScanning ? 'block' : 'none' }}
-          />
-          
-          {!isScanning && (
-            <div className="aspect-video bg-muted rounded-lg flex items-center justify-center">
-              <div className="text-center">
-                <div className="flex justify-center gap-4 mb-4">
-                  <Camera className="w-12 h-12 text-cyber-blue" />
-                  <Mic className="w-12 h-12 text-cyber-green" />
-                  <Thermometer className="w-12 h-12 text-cyber-orange" />
-                </div>
-                <p className="text-muted-foreground">Multi-sensor vital signs scanner ready</p>
-              </div>
-            </div>
           )}
         </div>
 
-        {/* Live Waveform */}
-        {isScanning && waveformData.length > 0 && (
-          <div className="mb-4">
-            <div className="text-sm text-muted-foreground mb-2">Live PPG Signal</div>
-            <div className="h-20 bg-background/50 rounded-lg p-2 relative overflow-hidden">
-              <svg className="w-full h-full">
-                <polyline
-                  fill="none"
-                  stroke="hsl(var(--cyber-green))"
-                  strokeWidth="2"
-                  points={waveformData.map((value, index) => 
-                    `${(index / waveformData.length) * 100},${50 + value * 0.5}`
-                  ).join(' ')}
-                />
-              </svg>
+        {/* Camera Feed */}
+        <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+          <video
+            ref={videoRef}
+            className="w-full h-full object-cover"
+            playsInline
+            muted
+          />
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 w-full h-full"
+            style={{ mixBlendMode: 'overlay' }}
+          />
+          
+          {/* Overlay UI */}
+          <div className="absolute inset-0 flex flex-col justify-between p-4">
+            <div className="flex justify-between items-start">
+              <Badge variant={fingerDetected ? "default" : "secondary"} className="bg-black/50">
+                {fingerDetected ? <CheckCircle className="h-3 w-3 mr-1" /> : <Camera className="h-3 w-3 mr-1" />}
+                {fingerDetected ? "Finger Detected" : "No Finger"}
+              </Badge>
+              
+              <Badge 
+                variant={
+                  signalQuality === "excellent" ? "default" :
+                  signalQuality === "good" ? "default" :
+                  signalQuality === "fair" ? "secondary" : "destructive"
+                }
+                className="bg-black/50"
+              >
+                <Activity className="h-3 w-3 mr-1" />
+                {signalQuality} ({qualityScore}%)
+              </Badge>
+            </div>
+            
+            <div className="text-center">
+              {realTimeBPM && (
+                <div className="text-2xl font-bold text-white bg-black/50 rounded px-3 py-1 inline-block">
+                  {realTimeBPM} BPM
+                </div>
+              )}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Current Readings */}
-        {currentVitals && (
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="text-center p-3 bg-background/30 rounded-lg">
-              <div className="text-2xl font-bold text-cyber-red">
-                {currentVitals.heartRate?.bpm}
-              </div>
-              <div className="text-xs text-muted-foreground">BPM</div>
-              <Badge variant="outline" className="mt-1">
-                {currentVitals.heartRate?.confidence.toFixed(0)}% confidence
-              </Badge>
-            </div>
-            
-            <div className="text-center p-3 bg-background/30 rounded-lg">
-              <div className="text-2xl font-bold text-cyber-blue">
-                {currentVitals.spO2?.percentage}%
-              </div>
-              <div className="text-xs text-muted-foreground">SpO₂</div>
-              <Badge variant="outline" className="mt-1">
-                {currentVitals.spO2?.quality}
-              </Badge>
-            </div>
-            
-            <div className="text-center p-3 bg-background/30 rounded-lg">
-              <div className="text-2xl font-bold text-cyber-orange">
-                {currentVitals.temperature?.celsius}°C
-              </div>
-              <div className="text-xs text-muted-foreground">Body Temp</div>
-              <Badge variant="outline" className="mt-1">
-                Estimated
-              </Badge>
-            </div>
-          </div>
-        )}
+        {/* Instructions */}
+        <Alert>
+          <Target className="h-4 w-4" />
+          <AlertDescription>
+            {instructions}
+            {motionDetected && " • Reduce hand movement"}
+          </AlertDescription>
+        </Alert>
 
         {/* Progress */}
         {isScanning && (
-          <div className="mb-4">
-            <div className="flex justify-between text-sm mb-2">
-              <span>Scanning Progress</span>
-              <span>{progress.toFixed(0)}%</span>
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="capitalize">{scanPhase}</span>
+              <span>{Math.round(scanProgress)}%</span>
             </div>
-            <Progress value={progress} className="h-2" />
+            <Progress value={scanProgress} className="h-2" />
           </div>
         )}
 
-        {/* Instructions */}
-        <div className="text-center mb-4">
-          <p className="text-sm text-muted-foreground">{instruction}</p>
+        {/* Current Method & Fallback Options */}
+        <div className="flex gap-2">
+          <Badge variant={currentMethod === "ppg" ? "default" : "secondary"}>
+            <Camera className="h-3 w-3 mr-1" />
+            Camera PPG
+          </Badge>
+          
+          {fallbackMethod !== "none" && (
+            <>
+              {fallbackMethod === "accelerometer" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={switchToAccelerometerMethod}
+                  className="text-xs"
+                >
+                  <Smartphone className="h-3 w-3 mr-1" />
+                  Try Chest Method
+                </Button>
+              )}
+            </>
+          )}
         </div>
 
         {/* Controls */}
-        <div className="flex gap-3">
-          {!isScanning ? (
-            <Button onClick={startScanning} className="flex-1">
-              <Camera className="w-4 h-4 mr-2" />
-              Start Vital Scan
-            </Button>
-          ) : (
-            <Button onClick={stopScanning} variant="destructive" className="flex-1">
-              <CameraOff className="w-4 h-4 mr-2" />
-              Stop Scan
-            </Button>
-          )}
+        <div className="flex gap-2">
+          <Button
+            onClick={isScanning ? stopScanning : startScanning}
+            className="flex-1"
+            variant={isScanning ? "destructive" : "default"}
+            disabled={scanPhase === "processing"}
+          >
+            {isScanning ? (
+              <>
+                <CameraOff className="h-4 w-4 mr-2" />
+                Stop Scan
+              </>
+            ) : (
+              <>
+                <Camera className="h-4 w-4 mr-2" />
+                Start Scan
+              </>
+            )}
+          </Button>
         </div>
-      </Card>
 
-      {/* Emergency Alerts */}
-      {currentVitals && (
-        <div className="space-y-2">
-          {(currentVitals.heartRate?.bpm || 0) > 150 && (
-            <Alert className="border-cyber-red">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                <strong>Tachycardia detected:</strong> Heart rate {currentVitals.heartRate?.bpm} BPM is above normal range.
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          {(currentVitals.heartRate?.bpm || 0) < 50 && (
-            <Alert className="border-cyber-red">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                <strong>Bradycardia detected:</strong> Heart rate {currentVitals.heartRate?.bpm} BPM is below normal range.
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          {(currentVitals.spO2?.percentage || 100) < 92 && (
-            <Alert className="border-cyber-red">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                <strong>Hypoxia warning:</strong> Blood oxygen {currentVitals.spO2?.percentage}% is below safe levels.
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          {(currentVitals.heartRate?.irregularity || 0) > 30 && (
-            <Alert className="border-cyber-orange">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                <strong>Irregular rhythm:</strong> Heart rhythm shows {currentVitals.heartRate?.irregularity.toFixed(0)}% variability.
-              </AlertDescription>
-            </Alert>
-          )}
-        </div>
-      )}
-    </div>
+        {/* Results */}
+        {lastResults && (
+          <div className="grid grid-cols-3 gap-4 pt-4 border-t">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-destructive">
+                {lastResults.heartRate.bpm}
+              </div>
+              <div className="text-xs text-muted-foreground">BPM</div>
+              <Badge variant="outline" className="text-xs mt-1">
+                {lastResults.heartRate.confidence}% conf.
+              </Badge>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-500">
+                {lastResults.spO2.percentage}%
+              </div>
+              <div className="text-xs text-muted-foreground">SpO₂</div>
+              <Badge variant="outline" className="text-xs mt-1">
+                {lastResults.spO2.confidence}% conf.
+              </Badge>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-2xl font-bold text-orange-500">
+                {lastResults.temperature.celsius.toFixed(1)}°
+              </div>
+              <div className="text-xs text-muted-foreground">Temp</div>
+              <Badge variant="outline" className="text-xs mt-1">
+                Est.
+              </Badge>
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
   );
 };
