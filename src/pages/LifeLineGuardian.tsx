@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRiskScoreEngine } from "@/components/RiskScoreEngine";
 import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
 import { SmartWatchHub } from "@/components/SmartWatchHub";
-import { EnhancedSmartWatchHub } from "@/components/EnhancedSmartWatchHub";
+import { RealisticSmartWatch } from "@/components/RealisticSmartWatch";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { 
   Shield, 
@@ -744,9 +744,14 @@ export const LifeLineGuardian = () => {
 
           {/* Watch Hub Tab */}
           <TabsContent value="watch">
-            <EnhancedSmartWatchHub
+            <RealisticSmartWatch
               onEmergencyTrigger={() => handleEmergencyTrigger("Watch SOS")}
               healthReadings={healthReadings}
+              onQRGenerate={() => setShowQRGenerator(true)}
+              onIncidentCreate={(data) => {
+                setIncidentData(data);
+                setShowIncidentPack(true);
+              }}
             />
           </TabsContent>
 
