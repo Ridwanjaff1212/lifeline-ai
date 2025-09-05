@@ -350,9 +350,9 @@ export const LifeLineDashboard = () => {
           {/* Voice Commands Tab */}
           <TabsContent value="voice" className="p-4">
             <VoiceCommands 
-              onEmergencyTrigger={handleEmergencyTrigger}
+              onEmergencyTriggered={() => handleEmergencyTrigger("Voice Emergency")}
+              onVitalRequest={() => console.log("Vitals requested")}
               onLocationShare={handleLocationShare}
-              userProfile={userProfile}
             />
           </TabsContent>
 

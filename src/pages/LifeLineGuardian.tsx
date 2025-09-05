@@ -23,6 +23,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useRiskScoreEngine } from "@/components/RiskScoreEngine";
+import { DiagnosticsPanel } from "@/components/DiagnosticsPanel";
+import { SmartWatchHub } from "@/components/SmartWatchHub";
 import { 
   Shield, 
   Heart, 
@@ -40,7 +43,8 @@ import {
   Navigation,
   QrCode,
   Brain,
-  Battery
+  Battery,
+  BarChart3
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -54,12 +58,13 @@ interface HealthReading {
 
 export const LifeLineGuardian = () => {
   const { toast } = useToast();
+  const { riskState, updateRisk, addEnvironmentalRisk, getDiagnostics, engine } = useRiskScoreEngine();
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   
-  // Core system states
+  // Core system states  
   const [guardianStatus, setGuardianStatus] = useState<"safe" | "elevated" | "emergency">("safe");
-  const [riskScore, setRiskScore] = useState(0);
   const [lastSystemCheck, setLastSystemCheck] = useState(new Date());
   const [activeAlerts, setActiveAlerts] = useState(0);
   
@@ -258,35 +263,35 @@ export const LifeLineGuardian = () => {
     }
   }, []);
 
-  // Risk scoring system
+  // Risk scoring system with advanced engine
   useEffect(() => {
-    let score = 0;
+    const newRiskState = updateRisk({
+      heartRate: healthReadings.heartRate,
+      spO2: healthReadings.spO2,
+      temperature: healthReadings.temperature,
+      timestamp: new Date(),
+      source: "sensor"
+    });
     
-    // Heart rate risk factors
-    if (healthReadings.heartRate > 100 || healthReadings.heartRate < 60) score += 2;
-    if (healthReadings.heartRate > 120 || healthReadings.heartRate < 50) score += 3;
-    
-    // SpO2 risk factors
-    if (healthReadings.spO2 < 95) score += 3;
-    if (healthReadings.spO2 < 90) score += 5;
-    
-    // Temperature risk factors
-    if (healthReadings.temperature > 38 || healthReadings.temperature < 36) score += 2;
-    if (healthReadings.temperature > 39 || healthReadings.temperature < 35) score += 4;
-    
-    // Motion/fall detection
-    if (sensorData.fallDetected) score += 8;
-    if (!sensorData.motion) score += 1; // No movement for extended period
-    
-    setRiskScore(Math.min(10, score));
+    // Add environmental factors
+    if (sensorData.fallDetected) {
+      addEnvironmentalRisk({
+        type: "sensor",
+        severity: 8,
+        confidence: 0.92,
+        description: "Fall detected by accelerometer",
+        evidence: { sensorType: "accelerometer" }
+      });
+    }
     
     // Update guardian status based on risk
+    const score = newRiskState.current;
     if (score >= 7) setGuardianStatus("emergency");
     else if (score >= 4) setGuardianStatus("elevated");
     else setGuardianStatus("safe");
     
     setActiveAlerts(score > 3 ? Math.ceil(score / 2) : 0);
-  }, [healthReadings, sensorData]);
+  }, [healthReadings, sensorData, updateRisk, addEnvironmentalRisk]);
 
   // Emergency trigger handler
   const handleEmergencyTrigger = useCallback((type: string) => {
@@ -332,7 +337,7 @@ export const LifeLineGuardian = () => {
         { time: new Date().toLocaleTimeString(), event: "Guardian Autopilot activated", severity: "info" as const }
       ],
       mediaCapture: { hasAudio: true, hasVideo: true, duration: 15 },
-      riskScore: riskScore,
+      riskScore: riskState.current,
       status: "active" as const,
       notes: `Guardian auto-detected: ${emergencyModal.type}`
     };
@@ -396,6 +401,34 @@ export const LifeLineGuardian = () => {
           </p>
         </div>
 
+        {/* Enhanced Header with Diagnostics */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Badge variant={guardianStatus === "emergency" ? "destructive" : guardianStatus === "elevated" ? "secondary" : "default"}>
+              Risk: {riskState.current.toFixed(1)}/10
+            </Badge>
+            <Badge variant="outline" className="flex items-center gap-1">
+              {riskState.trend === "rising" && "📈"}
+              {riskState.trend === "falling" && "📉"}
+              {riskState.trend === "stable" && "➡️"}
+              {riskState.trend}
+            </Badge>
+            <Badge variant="outline">
+              {(riskState.confidence * 100).toFixed(0)}% Confidence
+            </Badge>
+          </div>
+          
+          <Button 
+            onClick={() => setShowDiagnostics(true)}
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-2"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Diagnostics
+          </Button>
+        </div>
+
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="grid w-full grid-cols-6 bg-card/50">
@@ -429,7 +462,7 @@ export const LifeLineGuardian = () => {
           <TabsContent value="dashboard" className="space-y-6">
             <GuardianStatus
               status={guardianStatus}
-              riskScore={riskScore}
+              riskScore={riskState.current}
               lastCheck={lastSystemCheck}
               activeAlerts={activeAlerts}
             />
@@ -521,7 +554,7 @@ export const LifeLineGuardian = () => {
               <NeuroAI
                 onStressDetected={(level) => {
                   if (level === "critical") {
-                    setRiskScore(prev => Math.min(100, prev + 25));
+                    addEnvironmentalRisk({ type: "behavioral", severity: 8, confidence: 0.9, description: "Critical stress detected", evidence: { level } });
                     setCurrentSituation("medical");
                     toast({
                       title: "Critical Stress Detected",
@@ -545,7 +578,7 @@ export const LifeLineGuardian = () => {
                 currentLocation={{ lat: 29.3759, lng: 47.9774, city: "Kuwait City" }}
                 onDisasterDetected={(event) => {
                   setCurrentSituation(event.type === "earthquake" ? "disaster" : "fire");
-                  setRiskScore(prev => Math.min(100, prev + 30));
+                  addEnvironmentalRisk({ type: "environmental", severity: 9, confidence: 0.95, description: `${event.type} detected`, evidence: event });
                   toast({
                     title: `${event.type.replace('_', ' ').toUpperCase()} Detected`,
                     description: `${event.severity} severity in ${event.location}`,
@@ -733,6 +766,15 @@ export const LifeLineGuardian = () => {
             userProfile={userProfile}
           />
         )}
+
+        {/* Diagnostics Panel */}
+        <DiagnosticsPanel
+          isOpen={showDiagnostics}
+          onClose={() => setShowDiagnostics(false)}
+          riskEngine={engine}
+          currentVitals={healthReadings}
+          sensorData={sensorData}
+        />
 
         {showQRGenerator && (
           <EnhancedQRGenerator
